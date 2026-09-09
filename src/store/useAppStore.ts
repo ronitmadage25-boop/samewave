@@ -11,7 +11,7 @@ import type {
   Participant, PresenceState, WhiteboardStroke, WhiteboardPoint,
   RoomMessage, ThoughtType, PollOption, LiveRoom, RoomType,
 } from '@/types'
-import { TOPICS } from '@/data/topics'
+import { saveMomentToDB, fetchMySavedMoments, deleteSavedMomentFromDB } from '@/services/moments'
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 function makeReactions() {
@@ -112,7 +112,9 @@ interface AppState {
   leaveRoom: () => void
   setRoomStage: (stage: RoomStage) => void
   endRoom: () => void
-  saveMoment: () => void
+  saveMoment: (customMoment?: Partial<SavedMoment>) => Promise<{ error: string | null }>
+  fetchSavedMoments: () => Promise<void>
+  deleteSavedMoment: (momentId: string) => Promise<{ error: string | null }>
   resetJourney: () => void
   setActiveRoom: (room: Room | null) => void
 
@@ -213,6 +215,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         set({ user: session.user, session, profile, authLoading: false })
         // Sync profile to DB
         upsertProfile(session.user).catch(console.error)
+        get().fetchSavedMoments().catch(console.error)
       } else {
         set({ user: null, session: null, profile: null, authLoading: false })
       }
@@ -225,6 +228,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         set({ user: session.user, session, profile, authLoading: false })
         // Sync profile to DB on sign-in
         upsertProfile(session.user).catch(console.error)
+        get().fetchSavedMoments().catch(console.error)
       } else {
         set({ user: null, session: null, profile: null, authLoading: false })
       }
@@ -236,7 +240,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   wavelength: null,
-  topics: TOPICS,
+  topics: [],
   activeRoom: null,
   savedMoments: [],
   identityWavelengths: ['Building', 'Learning', 'Exploring'],
@@ -291,28 +295,68 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ activeRoom: { ...room, stage: 'wrap' } })
   },
 
-  saveMoment: () => {
-    const room = get().activeRoom
-    if (!room) return
-    const perspectiveCount = new Set(room.connections.map((c) => c.relationship)).size
-    const moment: SavedMoment = {
-      id: `m-${Date.now()}`,
-      topicLabel: room.topicLabel,
-      roomType: room.type,
-      savedAt: Date.now(),
-      mindsGathered: room.participants.length,
-      thoughtsShared: room.thoughts.length,
-      connectionsFormed: room.connections.length,
-      perspectivesEmerged: Math.max(1, perspectiveCount),
-      highlightThoughts: room.thoughts.slice(0, 3).map((t) => t.text),
+  saveMoment: async (customMoment?: Partial<SavedMoment>) => {
+    const user = get().user
+    if (!user) {
+      get().openAuthModal('Sign in with Google to save this moment.')
+      return { error: 'Not authenticated' }
     }
-    set((s) => ({ savedMoments: [moment, ...s.savedMoments] }))
+
+    const room = get().activeRoom
+    const topicLabel = customMoment?.topicLabel || room?.topicLabel || 'Wavelength Space'
+    const roomType = customMoment?.roomType || room?.type || 'text'
+    const mindsGathered = customMoment?.mindsGathered ?? room?.participants.length ?? 1
+    const thoughtsShared = customMoment?.thoughtsShared ?? room?.thoughts.length ?? 0
+    const connectionsFormed = customMoment?.connectionsFormed ?? room?.connections.length ?? 0
+    const perspectivesEmerged = customMoment?.perspectivesEmerged ?? (room ? Math.max(1, new Set(room.connections.map(c => c.relationship)).size) : 1)
+    const highlightThoughts = customMoment?.highlightThoughts ?? (room?.thoughts.slice(0, 3).map(t => t.text) ?? [])
+
+    const { data, error } = await saveMomentToDB({
+      roomId: room?.id || null,
+      roomTitle: topicLabel,
+      roomType,
+      mindsGathered,
+      thoughtsShared,
+      connectionsFormed,
+      perspectivesEmerged,
+      highlightThoughts,
+    }, user.id)
+
+    if (error || !data) {
+      return { error: error || 'Failed to save moment' }
+    }
+
+    set((s) => ({
+      savedMoments: [data, ...s.savedMoments.filter(m => m.id !== data.id)],
+    }))
+
     get().addActivityEvent({
       type: 'moment-saved',
       title: 'You saved a moment',
-      subtitle: `${room.topicLabel} · ${room.participants.length} minds · ${room.thoughts.length} thoughts`,
-      roomLabel: room.topicLabel,
+      subtitle: `${topicLabel} · ${mindsGathered} minds · ${thoughtsShared} thoughts`,
+      roomLabel: topicLabel,
     })
+
+    return { error: null }
+  },
+
+  fetchSavedMoments: async () => {
+    const user = get().user
+    if (!user) return
+    const { data, error } = await fetchMySavedMoments(user.id)
+    if (!error && data) {
+      set({ savedMoments: data })
+    }
+  },
+
+  deleteSavedMoment: async (momentId: string) => {
+    const user = get().user
+    if (!user) return { error: 'Not authenticated' }
+    const { error } = await deleteSavedMomentFromDB(momentId, user.id)
+    if (!error) {
+      set((s) => ({ savedMoments: s.savedMoments.filter((m) => m.id !== momentId) }))
+    }
+    return { error }
   },
 
   resetJourney: () => {

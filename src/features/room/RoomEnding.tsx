@@ -10,8 +10,8 @@ export function RoomEnding({ room, onContinue }: { room: Room; onContinue: () =>
 
   const perspectiveCount = new Set(room.connections.map((c) => c.relationship)).size
 
-  function handleSaveMoment() {
-    saveMoment()
+  async function handleSaveMoment() {
+    await saveMoment()
     setSaved(true)
   }
 

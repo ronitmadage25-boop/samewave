@@ -5,6 +5,7 @@ import {
   Mic, MicOff, Video, VideoOff, Hand, PhoneOff,
   Sparkles, MessageSquare, QrCode, Copy, Check,
   ArrowLeft, AlertCircle, Radio, Users, Send, Smile,
+  Bookmark,
 } from 'lucide-react'
 import { useAppStore } from '@/store/useAppStore'
 import { signInWithGoogle } from '@/services/auth'
@@ -244,6 +245,29 @@ export default function RoomPage() {
     ? `${window.location.origin}/room/${roomId}?type=${roomType}&title=${encodeURIComponent(roomTitle)}&category=${encodeURIComponent(roomCategory)}`
     : `https://samewave-kappa.vercel.app/room/${roomId}`
 
+  const [savedMoment, setSavedMoment] = useState(false)
+  const [savingMoment, setSavingMoment] = useState(false)
+  const saveMomentStore = useAppStore((s) => s.saveMoment)
+
+  async function handleSaveMoment() {
+    if (!user) return
+    setSavingMoment(true)
+    const res = await saveMomentStore({
+      topicLabel: roomTitle,
+      roomType: roomType,
+      mindsGathered: Math.max(1, participants.length),
+      thoughtsShared: thoughts.length,
+      connectionsFormed: 0,
+      perspectivesEmerged: 1,
+      highlightThoughts: thoughts.slice(0, 3).map((t) => t.text),
+    })
+    setSavingMoment(false)
+    if (!res?.error) {
+      setSavedMoment(true)
+      setTimeout(() => setSavedMoment(false), 3000)
+    }
+  }
+
   function handleCopyInvite() {
     navigator.clipboard.writeText(inviteUrl).then(() => {
       setCopiedLink(true)
@@ -413,8 +437,22 @@ export default function RoomPage() {
           </div>
         </div>
 
-        {/* Action buttons: SHARE WAVELENGTH (Copy Link & QR) */}
+        {/* Action buttons: SHARE WAVELENGTH (Copy Link & QR) & SAVE MOMENT */}
         <div className="flex items-center gap-2 shrink-0">
+          <button
+            onClick={handleSaveMoment}
+            disabled={savingMoment}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all border shadow-sm ${
+              savedMoment
+                ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                : 'bg-white/5 hover:bg-white/10 text-[#F0EEE8] border-white/10'
+            }`}
+            title="Save this moment to your Identity"
+          >
+            {savedMoment ? <Check size={14} className="text-emerald-400" /> : <Bookmark size={14} />}
+            <span className="hidden sm:inline">{savedMoment ? 'Saved' : 'Save Moment'}</span>
+          </button>
+
           <button
             onClick={handleCopyInvite}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-[#F0EEE8] text-xs font-medium transition-colors border border-white/10"
@@ -738,6 +776,21 @@ export default function RoomPage() {
                 {thoughts.length}
               </span>
             )}
+          </button>
+
+          {/* Save Moment */}
+          <button
+            onClick={handleSaveMoment}
+            disabled={savingMoment}
+            className={`min-w-[48px] h-12 px-3 rounded-2xl flex items-center justify-center gap-1.5 font-semibold text-xs transition-all active:scale-95 ${
+              savedMoment
+                ? 'bg-emerald-600 text-white shadow-lg'
+                : 'bg-white/10 text-white hover:bg-white/15'
+            }`}
+            title="Save Moment to Identity"
+          >
+            {savedMoment ? <Check size={18} /> : <Bookmark size={18} />}
+            <span className="hidden md:inline">{savedMoment ? 'Saved' : 'Save Moment'}</span>
           </button>
 
           {/* Leave Session */}

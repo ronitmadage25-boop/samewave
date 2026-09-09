@@ -28,8 +28,8 @@ export default function SummaryPage() {
   const Icon = ROOM_TYPE_ICONS[room.type]
   const typeColor = ROOM_TYPE_COLORS[room.type]
 
-  function handleSave() {
-    saveMoment()
+  async function handleSave() {
+    await saveMoment()
     setSaved(true)
   }
 

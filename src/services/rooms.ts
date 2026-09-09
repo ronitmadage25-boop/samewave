@@ -65,6 +65,23 @@ export async function createRoomInDB(
   creatorId: string
 ): Promise<{ data: DbRoom | null; error: string | null }> {
   // First ensure a profile row exists for this user (needed for host FK)
+  try {
+    const { data: authData } = await supabase.auth.getUser()
+    const u = authData?.user
+    if (u && u.id === creatorId) {
+      await supabase.from('profiles').upsert({
+        id: creatorId,
+        display_name: u.user_metadata?.full_name || u.user_metadata?.name || u.email?.split('@')[0] || 'Wave Rider',
+        avatar_url: u.user_metadata?.avatar_url || u.user_metadata?.picture || null,
+        initials: 'WR',
+        email: u.email || null,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'id' })
+    }
+  } catch {
+    // Non-fatal safeguard
+  }
+
   const { data, error } = await supabase
     .from('rooms')
     .insert({

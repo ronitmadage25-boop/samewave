@@ -1,10 +1,10 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useNavigate } from 'react-router-dom'
 import {
   Bookmark, MessageSquare, Mic, Video,
   Check, User as UserIcon, LogOut, Edit3, ShieldCheck,
-  Zap, Send, PenLine
+  Zap, Send, Trash2, PenLine
 } from 'lucide-react'
 import { useAppStore } from '@/store/useAppStore'
 import { useAuth } from '@/hooks/useAuth'
@@ -26,10 +26,18 @@ function formatDate(ts: number) {
 export default function IdentityPage() {
   const navigate = useNavigate()
   const savedMoments = useAppStore((s) => s.savedMoments)
+  const fetchSavedMoments = useAppStore((s) => s.fetchSavedMoments)
+  const deleteSavedMoment = useAppStore((s) => s.deleteSavedMoment)
   const myDailySignal = useAppStore((s) => s.myDailySignal)
   const publishDailySignal = useAppStore((s) => s.publishDailySignal)
 
   const { user, profile, isAuthenticated, signOut, openAuthModal } = useAuth()
+
+  useEffect(() => {
+    if (user) {
+      fetchSavedMoments()
+    }
+  }, [user, fetchSavedMoments])
 
   const [signalDraft, setSignalDraft] = useState('')
   const [signalPublished, setSignalPublished] = useState(false)
@@ -337,9 +345,22 @@ export default function IdentityPage() {
                             {moment.topicLabel}
                           </h4>
                         </div>
-                        <span className="text-[10px] font-mono" style={{ color: 'var(--color-muted)' }}>
-                          {formatDate(moment.savedAt)}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] font-mono" style={{ color: 'var(--color-muted)' }}>
+                            {formatDate(moment.savedAt)}
+                          </span>
+                          <button
+                            onClick={async () => {
+                              if (window.confirm('Delete this saved moment?')) {
+                                await deleteSavedMoment(moment.id)
+                              }
+                            }}
+                            className="p-1 rounded-md text-[var(--color-muted)] hover:text-red-400 hover:bg-white/5 transition-colors"
+                            title="Delete saved moment"
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
                       </div>
                       <div className="grid grid-cols-4 gap-2 text-center p-2 rounded-xl"
                         style={{ background: 'var(--color-bg)' }}>

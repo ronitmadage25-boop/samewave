@@ -195,6 +195,23 @@ export async function publishDailySignal(
 ): Promise<{ data: DbDailySignal | null; error: string | null }> {
   const today = new Date().toISOString().split('T')[0]
 
+  try {
+    const { data: authData } = await supabase.auth.getUser()
+    const u = authData?.user
+    if (u && u.id === userId) {
+      await supabase.from('profiles').upsert({
+        id: userId,
+        display_name: u.user_metadata?.full_name || u.user_metadata?.name || u.email?.split('@')[0] || 'Wave Rider',
+        avatar_url: u.user_metadata?.avatar_url || u.user_metadata?.picture || null,
+        initials: 'WR',
+        email: u.email || null,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'id' })
+    }
+  } catch {
+    // Non-fatal safeguard
+  }
+
   const { data, error } = await supabase
     .from('daily_signals')
     .insert({
