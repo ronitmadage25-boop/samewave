@@ -1,5 +1,5 @@
-import type { User } from '@supabase/supabase-js'
-import { supabase } from '@/lib/supabase'
+import type { User, Session } from '@supabase/supabase-js'
+import { supabase, isSupabaseConfigured } from '@/lib/supabase'
 import type { SignalReaction } from '@/types'
 
 export interface UserProfile {
@@ -12,7 +12,7 @@ export interface UserProfile {
 
 export interface AuthState {
   user: User | null
-  session: import('@supabase/supabase-js').Session | null
+  session: Session | null
   profile: UserProfile | null
   loading: boolean
   isConfigured: boolean
@@ -84,7 +84,6 @@ export async function upsertProfile(user: User): Promise<void> {
  * Trigger Google OAuth sign-in via Supabase Auth
  */
 export async function signInWithGoogle(): Promise<{ error: Error | null }> {
-  const { isSupabaseConfigured } = await import('@/lib/supabase')
   if (!isSupabaseConfigured()) {
     return {
       error: new Error('Supabase is not yet configured with VITE_SUPABASE_PUBLISHABLE_KEY in .env.'),

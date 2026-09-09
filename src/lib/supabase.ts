@@ -1,14 +1,18 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://cewugwkgftolebynohqp.supabase.co'
-const supabasePublishableKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY || ''
+const rawUrl = (import.meta.env.VITE_SUPABASE_URL || 'https://cewugwkgftolebynohqp.supabase.co') as string
+const rawPublishableKey = (import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY || '') as string
+
+const supabaseUrl = rawUrl.replace(/^["']|["']$/g, '').trim()
+const supabasePublishableKey = rawPublishableKey.replace(/^["']|["']$/g, '').trim()
 
 export const isSupabaseConfigured = (): boolean => {
   return Boolean(
     supabaseUrl &&
     supabasePublishableKey &&
-    supabasePublishableKey.trim().length > 0 &&
-    supabasePublishableKey !== 'your-supabase-publishable-key'
+    supabasePublishableKey.length > 0 &&
+    supabasePublishableKey !== 'your-supabase-publishable-key' &&
+    supabasePublishableKey !== 'placeholder-anon-key'
   )
 }
 
