@@ -106,6 +106,7 @@ interface AppState {
 
   // ── Rooms Discovery ───────────────────────────────────────────────────
   fetchLiveRooms: () => Promise<void>
+  setLiveRooms: (rooms: LiveRoom[]) => void
 
   // ── Room Lifecycle (local UI state) ─────────────────────────────────────
   leaveRoom: () => void
@@ -258,34 +259,14 @@ export const useAppStore = create<AppState>((set, get) => ({
   getTopResonantTopics: (n = 3) =>
     [...get().topics].sort((a, b) => (b.resonance ?? 0) - (a.resonance ?? 0)).slice(0, n),
 
-  // ── Live Rooms (real DB) ────────────────────────────────────────────────
+  // ── Live Rooms (Ephemeral Lobby via Supabase Realtime) ──────────────────
   fetchLiveRooms: async () => {
-    set({ liveRoomsLoading: true, liveRoomsError: null })
-    const { data, error } = await RoomService.fetchRooms()
-    if (error) {
-      set({ liveRoomsLoading: false, liveRoomsError: error })
-      return
-    }
-    const liveRooms: LiveRoom[] = data.map(r => ({
-      id: r.id,
-      title: r.title,
-      type: r.type,
-      category: r.category,
-      description: r.description,
-      visibility: r.visibility,
-      status: r.status,
-      capacity: r.capacity,
-      duration_minutes: r.duration_minutes,
-      member_count: r.member_count ?? 0,
-      host_name: r.host_name,
-      host_avatar: r.host_avatar,
-      host_initials: r.host_initials,
-      created_at: r.created_at,
-      expires_at: r.expires_at,
-      tools: r.tools,
-    }))
-    set({ liveRooms, liveRoomsLoading: false })
+    set({ liveRoomsLoading: false, liveRoomsError: null })
+    const { data } = await RoomService.fetchRooms()
+    set({ liveRooms: data, liveRoomsLoading: false })
   },
+
+  setLiveRooms: (liveRooms: LiveRoom[]) => set({ liveRooms, liveRoomsLoading: false }),
 
   // ── Room UI State ────────────────────────────────────────────────────────
   setActiveRoom: (room) => set({ activeRoom: room }),

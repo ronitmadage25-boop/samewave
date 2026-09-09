@@ -6,6 +6,7 @@ import {
   ArrowRight, Map, List, Filter, Plus, RefreshCw, AlertCircle, Radio
 } from 'lucide-react'
 import { useAppStore } from '@/store/useAppStore'
+import { subscribeToLobby } from '@/services/rooms'
 import type { Category, LiveRoom, RoomType } from '@/types'
 
 const CATEGORY_COLORS: Record<Category, string> = {
@@ -200,12 +201,16 @@ export default function RoomsPage() {
   const roomTypes: RoomType[] = ['text', 'audio', 'video']
   const categories: Category[] = ['Tech', 'Creative', 'Social', 'Lifestyle']
 
-  // Fetch real rooms on mount and on interval
+  // Realtime Ephemeral Lobby Subscription (samewave-lobby)
   useEffect(() => {
     fetchLiveRooms()
-    const interval = setInterval(fetchLiveRooms, 30000) // Refresh every 30s
-    return () => clearInterval(interval)
-  }, [])
+    const unsubscribe = subscribeToLobby((rooms) => {
+      useAppStore.getState().setLiveRooms(rooms)
+    })
+    return () => {
+      unsubscribe()
+    }
+  }, [fetchLiveRooms])
 
   const filtered = useMemo(() => {
     let base = liveRooms.filter((r) => {

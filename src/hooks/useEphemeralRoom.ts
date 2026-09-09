@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useAppStore } from '@/store/useAppStore'
-import type { Participant, RoomType, Thought, ThoughtType, WhiteboardStroke } from '@/types'
+import { advertiseRoomInLobby } from '@/services/rooms'
+import type { Participant, RoomType, Thought, ThoughtType, WhiteboardStroke, Category } from '@/types'
 
 const ICE_SERVERS: RTCIceServer[] = [
   { urls: 'stun:stun.l.google.com:19302' },
@@ -38,10 +39,18 @@ export interface FloatingReaction {
 interface UseEphemeralRoomOptions {
   roomId: string | undefined
   roomType: RoomType
+  roomTitle?: string
+  roomCategory?: Category
   enabled?: boolean
 }
 
-export function useEphemeralRoom({ roomId, roomType, enabled = true }: UseEphemeralRoomOptions) {
+export function useEphemeralRoom({
+  roomId,
+  roomType,
+  roomTitle = 'Wavelength Space',
+  roomCategory = 'Tech',
+  enabled = true,
+}: UseEphemeralRoomOptions) {
   const user = useAppStore((s) => s.user)
   const profile = useAppStore((s) => s.profile)
 
@@ -60,6 +69,7 @@ export function useEphemeralRoom({ roomId, roomType, enabled = true }: UseEpheme
   const [thoughts, setThoughts] = useState<Thought[]>([])
   const [floatingReactions, setFloatingReactions] = useState<FloatingReaction[]>([])
   const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'error'>('connecting')
+  const [hasEnded, setHasEnded] = useState(false)
 
   // Refs
   const peerConnectionsRef = useRef<Map<string, PeerConnectionData>>(new Map())
@@ -436,6 +446,9 @@ export function useEphemeralRoom({ roomId, roomType, enabled = true }: UseEpheme
           if (!isSubscribed || !payload || payload.participantId === user.id) return
           onWhiteboardStrokeRef.current?.(payload as WhiteboardStroke)
         })
+        .on('broadcast', { event: 'room-ended' }, () => {
+          setHasEnded(true)
+        })
 
       // ── SUBSCRIBE & INITIAL PRESENCE TRACK ──────────────────────────────────
       channel.subscribe(async (status) => {
@@ -623,6 +636,57 @@ export function useEphemeralRoom({ roomId, roomType, enabled = true }: UseEpheme
     }
   }, [])
 
+  // ── 7. Lobby Room Advertisement ──────────────────────────────────────────
+  const lobbyAdRef = useRef<ReturnType<typeof advertiseRoomInLobby> | null>(null)
+
+  useEffect(() => {
+    if (!roomId || !enabled || !user || !profile || hasEnded) return
+
+    const ad = advertiseRoomInLobby({
+      roomId,
+      title: roomTitle || 'Wavelength Space',
+      roomType,
+      category: (roomCategory as Category) || 'Tech',
+      creatorId: user.id,
+      creatorName: profile.displayName || user.email?.split('@')[0] || 'Wave Rider',
+      creatorAvatar: profile.avatarUrl ?? null,
+      creatorInitials: profile.initials || 'WR',
+      createdAt: new Date().toISOString(),
+      capacity: 32,
+      currentPresenceCount: Math.max(1, participants.length),
+    })
+    lobbyAdRef.current = ad
+
+    return () => {
+      ad.cleanup()
+      lobbyAdRef.current = null
+    }
+  }, [roomId, enabled, user, profile, roomTitle, roomType, roomCategory, hasEnded])
+
+  // Keep participant count synced in lobby advertisement
+  useEffect(() => {
+    if (lobbyAdRef.current) {
+      lobbyAdRef.current.updateCount(Math.max(1, participants.length))
+    }
+  }, [participants.length])
+
+  const endRoom = useCallback(() => {
+    setHasEnded(true)
+    if (channelRef.current) {
+      try {
+        channelRef.current.send({
+          type: 'broadcast',
+          event: 'room-ended',
+          payload: { roomId },
+        })
+      } catch {}
+    }
+    if (lobbyAdRef.current) {
+      lobbyAdRef.current.cleanup()
+      lobbyAdRef.current = null
+    }
+  }, [roomId])
+
   return {
     localStream,
     remoteStreams,
@@ -645,5 +709,7 @@ export function useEphemeralRoom({ roomId, roomType, enabled = true }: UseEpheme
       onWhiteboardStrokeRef.current = fn
     },
     connectionStatus,
+    hasEnded,
+    endRoom,
   }
 }

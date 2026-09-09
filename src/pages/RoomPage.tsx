@@ -202,6 +202,7 @@ export default function RoomPage() {
 
   const roomType = (searchParams.get('type') as RoomType) || 'video'
   const roomTitle = searchParams.get('title') || 'Wavelength Space'
+  const roomCategory = (searchParams.get('category') as import('@/types').Category) || 'Tech'
 
   const user = useAppStore((s) => s.user)
   const profile = useAppStore((s) => s.profile)
@@ -228,14 +229,19 @@ export default function RoomPage() {
     floatingReactions,
     sendThought,
     sendReaction,
+    connectionStatus,
+    hasEnded,
+    endRoom,
   } = useEphemeralRoom({
     roomId,
     roomType,
+    roomTitle,
+    roomCategory,
     enabled: Boolean(user && roomId),
   })
 
   const inviteUrl = typeof window !== 'undefined'
-    ? `${window.location.origin}/room/${roomId}?type=${roomType}&title=${encodeURIComponent(roomTitle)}`
+    ? `${window.location.origin}/room/${roomId}?type=${roomType}&title=${encodeURIComponent(roomTitle)}&category=${encodeURIComponent(roomCategory)}`
     : `https://samewave-kappa.vercel.app/room/${roomId}`
 
   function handleCopyInvite() {
@@ -254,6 +260,9 @@ export default function RoomPage() {
   }
 
   function handleLeave() {
+    if (participants.length <= 1) {
+      endRoom()
+    }
     navigate('/rooms')
   }
 
@@ -328,7 +337,52 @@ export default function RoomPage() {
     )
   }
 
-  // ── 2. ACTIVE EPHEMERAL ROOM UI
+  // ── 2. ENDED ROOM STATE
+  if (hasEnded) {
+    return (
+      <div className="min-h-screen bg-[#0A0A0F] text-[#F0EEE8] flex flex-col items-center justify-center p-6 text-center select-none">
+        <div className="w-16 h-16 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center mb-4 text-[var(--color-signal)]">
+          <Radio size={28} />
+        </div>
+        <h2 className="text-xl font-bold font-display mb-2">This wavelength has ended</h2>
+        <p className="text-sm text-[#8A8680] max-w-sm mb-6">
+          The participants have wrapped up this temporary space. Discover active live wavelengths or start a new one.
+        </p>
+        <button
+          onClick={() => navigate('/rooms')}
+          className="px-6 py-3 rounded-xl bg-[var(--color-signal)] text-white font-semibold text-sm hover:opacity-90 active:scale-95 transition-all shadow-lg"
+        >
+          Discover live wavelengths
+        </button>
+      </div>
+    )
+  }
+
+  // ── 3. CONNECTION ERROR STATE (No blank black screen)
+  if (connectionStatus === 'error') {
+    return (
+      <div className="min-h-screen bg-[#0A0A0F] text-[#F0EEE8] flex flex-col items-center justify-center p-6 text-center select-none">
+        <div className="w-16 h-16 rounded-2xl bg-red-500/10 border border-red-500/20 flex items-center justify-center mb-4 text-red-400">
+          <AlertCircle size={28} />
+        </div>
+        <h2 className="text-xl font-bold font-display mb-2">Wavelength unavailable</h2>
+        <p className="text-sm text-[#8A8680] max-w-sm mb-2">
+          Unable to establish a realtime connection for this space.
+        </p>
+        <p className="text-xs font-mono text-red-400/80 mb-6">
+          Realtime signal timed out or channel connection failed.
+        </p>
+        <button
+          onClick={() => navigate('/rooms')}
+          className="px-6 py-3 rounded-xl bg-white/10 hover:bg-white/20 text-white font-semibold text-sm active:scale-95 transition-all border border-white/10"
+        >
+          Back to live wavelengths
+        </button>
+      </div>
+    )
+  }
+
+  // ── 4. ACTIVE EPHEMERAL ROOM UI
   const remoteParticipants = participants.filter((p) => !p.isSelf)
 
   return (
@@ -359,7 +413,7 @@ export default function RoomPage() {
           </div>
         </div>
 
-        {/* Action buttons: Copy link & QR code */}
+        {/* Action buttons: SHARE WAVELENGTH (Copy Link & QR) */}
         <div className="flex items-center gap-2 shrink-0">
           <button
             onClick={handleCopyInvite}
@@ -367,16 +421,16 @@ export default function RoomPage() {
             title="Copy invite link"
           >
             {copiedLink ? <Check size={14} className="text-green-400" /> : <Copy size={14} />}
-            <span className="hidden sm:inline">{copiedLink ? 'Copied' : 'Copy Link'}</span>
+            <span className="hidden sm:inline">{copiedLink ? 'Copied Link' : 'Copy Link'}</span>
           </button>
 
           <button
             onClick={() => setInviteModalOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[var(--color-signal)] text-white text-xs font-semibold hover:opacity-95 active:scale-95 transition-all shadow-md"
-            title="Show QR Code"
+            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-[var(--color-signal)] text-white text-xs font-semibold hover:opacity-95 active:scale-95 transition-all shadow-md"
+            title="Share Wavelength"
           >
             <QrCode size={14} />
-            <span className="hidden sm:inline">Invite QR</span>
+            <span>SHARE WAVELENGTH</span>
           </button>
         </div>
       </header>

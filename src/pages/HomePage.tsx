@@ -201,13 +201,28 @@ export default function HomePage() {
   }
 
   return (
-    <div className="min-h-screen pb-24 lg:pb-12 bg-[var(--color-bg)]">
-      {/* Top Bar */}
-      <header className="sticky top-0 z-20 px-6 lg:px-10 py-4 border-b border-[var(--color-border)] bg-[var(--color-surface)]/85 backdrop-blur-md flex items-center justify-between">
-        <div>
-          <h1 className="font-display text-xl font-bold text-[var(--color-fg)]">
-            Now on SameWave
-          </h1>
+    <div className="min-h-screen pb-24 lg:pb-12 bg-[var(--color-bg)] relative overflow-hidden">
+      {/* ── Ambient Background Video ────────────────────────────────────────── */}
+      <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden">
+        <video
+          src="/background.mp4"
+          autoPlay
+          loop
+          muted
+          playsInline
+          className="w-full h-full object-cover opacity-20"
+        />
+        <div className="absolute inset-0 bg-gradient-to-b from-[#0A0A0F]/85 via-[#0A0A0F]/75 to-[#0A0A0F]/95" />
+      </div>
+
+      {/* ── Content Layer ───────────────────────────────────────────────────── */}
+      <div className="relative z-10">
+        {/* Top Bar */}
+        <header className="sticky top-0 z-20 px-6 lg:px-10 py-4 border-b border-[var(--color-border)] bg-[var(--color-surface)]/80 backdrop-blur-xl flex items-center justify-between">
+          <div>
+            <h1 className="font-display text-xl font-bold text-[var(--color-fg)]">
+              Now on SameWave
+            </h1>
           {wavelength ? (
             <p className="text-xs text-[var(--color-muted)] flex items-center gap-1.5 mt-0.5 font-mono">
               <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-signal)] animate-pulse" />
@@ -454,6 +469,7 @@ export default function HomePage() {
             </div>
           </div>
         </div>
+      </div>
       </div>
     </div>
   )

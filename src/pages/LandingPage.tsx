@@ -81,9 +81,23 @@ export default function LandingPage() {
   const navigate = useNavigate()
 
   return (
-    <div className="min-h-screen overflow-hidden" style={{ background: 'var(--color-bg)' }}>
-      {/* Top nav */}
-      <header className="relative z-20 flex items-center justify-between px-6 md:px-10 py-6">
+    <div className="min-h-screen overflow-hidden relative" style={{ background: 'var(--color-bg)' }}>
+      {/* ── Ambient Background Video ────────────────────────────────────────── */}
+      <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden">
+        <video
+          src="/background.mp4"
+          autoPlay
+          loop
+          muted
+          playsInline
+          className="w-full h-full object-cover opacity-25"
+        />
+        <div className="absolute inset-0 bg-gradient-to-b from-[#0A0A0F]/85 via-[#0A0A0F]/75 to-[#0A0A0F]/95" />
+      </div>
+
+      <div className="relative z-10">
+        {/* Top nav */}
+        <header className="relative z-20 flex items-center justify-between px-6 md:px-10 py-6">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 rounded-lg flex items-center justify-center"
             style={{ background: 'var(--color-signal)' }}>
@@ -511,6 +525,7 @@ export default function LandingPage() {
           </motion.div>
         </div>
       </section>
+      </div>
     </div>
   )
 }

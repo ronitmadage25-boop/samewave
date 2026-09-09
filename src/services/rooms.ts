@@ -1,26 +1,20 @@
-import type { Category, RoomType, RoomTool } from '@/types'
+import type { Category, RoomType, LiveRoom } from '@/types'
 import { supabase } from '@/lib/supabase'
 
-export interface DbRoom {
-  id: string
-  host_id: string
+export interface EphemeralRoomAdvertisement {
+  roomId: string
   title: string
-  description: string | null
-  type: RoomType
+  roomType: RoomType
   category: Category
-  visibility: 'public' | 'private' | 'invite'
-  status: 'active' | 'ended' | 'cancelled'
+  creatorId: string
+  creatorName: string
+  creatorAvatar?: string | null
+  creatorInitials?: string
+  createdAt: string
   capacity: number
-  duration_minutes: number
-  tools: string[]
-  expires_at: string | null
-  created_at: string
-  updated_at: string
-  // From view
-  host_name?: string
-  host_avatar?: string | null
-  host_initials?: string
-  member_count?: number
+  currentPresenceCount: number
+  description?: string
+  expiresAt?: string | null
 }
 
 export interface CreateRoomInput {
@@ -31,213 +25,226 @@ export interface CreateRoomInput {
   capacity?: number
   durationMinutes?: number
   visibility?: 'public' | 'invite'
-  tools?: RoomTool[]
 }
 
-/**
- * Fetch all active public rooms with member counts.
- */
-export async function fetchRooms(): Promise<{ data: DbRoom[]; error: string | null }> {
-  const { data, error } = await supabase
-    .from('rooms_with_counts')
-    .select('*')
-    .eq('status', 'active')
-    .eq('visibility', 'public')
-    .gt('expires_at', new Date().toISOString())
-    .order('created_at', { ascending: false })
-    .limit(100)
+// In-memory registry of ephemeral rooms discovered via Supabase Realtime
+const ephemeralRoomsMap = new Map<string, LiveRoom>()
+let lobbyChannelInstance: ReturnType<typeof supabase.channel> | null = null
 
-  if (error) {
-    console.error('[rooms] fetchRooms error:', error)
-    return { data: [], error: error.message }
+export function toLiveRoom(ad: EphemeralRoomAdvertisement): LiveRoom {
+  return {
+    id: ad.roomId,
+    title: ad.title || 'Untitled Wavelength',
+    type: ad.roomType || 'video',
+    category: ad.category || 'Tech',
+    description: ad.description || null,
+    visibility: 'public',
+    status: 'active',
+    capacity: ad.capacity || 32,
+    duration_minutes: 45,
+    member_count: Math.max(1, ad.currentPresenceCount || 1),
+    host_name: ad.creatorName || 'Wave Rider',
+    host_avatar: ad.creatorAvatar ?? null,
+    host_initials: ad.creatorInitials || 'WR',
+    created_at: ad.createdAt || new Date().toISOString(),
+    expires_at: ad.expiresAt ?? null,
+    tools: ['reactions', 'thought-graph'],
   }
-  return { data: data ?? [], error: null }
 }
 
 /**
- * Fetch a single room by ID (with counts).
+ * Advertises an active room to the global ephemeral lobby (samewave-lobby).
+ * Uses Realtime Presence so presence is automatically removed when host/browser disconnects.
+ * Also responds to lobby-ping broadcasts from late subscribers.
  */
-export async function fetchRoomById(roomId: string): Promise<{ data: DbRoom | null; error: string | null }> {
-  const { data, error } = await supabase
-    .from('rooms_with_counts')
-    .select('*')
-    .eq('id', roomId)
-    .single()
+export function advertiseRoomInLobby(ad: EphemeralRoomAdvertisement): {
+  updateCount: (count: number) => void
+  cleanup: () => void
+} {
+  let currentAd = { ...ad }
+  const channel = supabase.channel('samewave-lobby', {
+    config: { presence: { key: `room_${ad.roomId}` } },
+  })
 
-  if (error) {
-    console.error('[rooms] fetchRoomById error:', error)
-    return { data: null, error: error.message }
+  const sendAdBroadcast = () => {
+    try {
+      channel.send({
+        type: 'broadcast',
+        event: 'room-advertisement',
+        payload: currentAd,
+      })
+    } catch {}
   }
-  return { data, error: null }
+
+  channel
+    .on('broadcast', { event: 'lobby-ping' }, () => {
+      // Immediate response to newly connected clients
+      sendAdBroadcast()
+    })
+    .subscribe(async (status) => {
+      if (status === 'SUBSCRIBED') {
+        try {
+          await channel.track(currentAd)
+          sendAdBroadcast()
+        } catch (err) {
+          console.error('[lobby] failed to track room presence:', err)
+        }
+      }
+    })
+
+  return {
+    updateCount: (count: number) => {
+      currentAd = { ...currentAd, currentPresenceCount: count }
+      try {
+        channel.track(currentAd)
+        sendAdBroadcast()
+      } catch {}
+    },
+    cleanup: () => {
+      try {
+        channel.send({
+          type: 'broadcast',
+          event: 'room-ended',
+          payload: { roomId: ad.roomId },
+        })
+        channel.untrack()
+        channel.unsubscribe()
+      } catch {}
+    },
+  }
 }
 
 /**
- * Create a new room. Returns the newly created room.
+ * Subscribes the Rooms/Discover page to the global ephemeral lobby (samewave-lobby).
+ * Receives presence sync (handles late subscribers) & instant broadcasts.
+ */
+export function subscribeToLobby(onUpdate: (rooms: LiveRoom[]) => void): () => void {
+  // Return existing channel if already listening, or create new
+  const channel = supabase.channel('samewave-lobby', {
+    config: { presence: { key: `visitor_${Math.random().toString(36).slice(2, 8)}` } },
+  })
+  lobbyChannelInstance = channel
+
+  const dispatchUpdate = () => {
+    const list = Array.from(ephemeralRoomsMap.values())
+    onUpdate(list)
+  }
+
+  channel
+    .on('presence', { event: 'sync' }, () => {
+      const state = channel.presenceState()
+      const seenRoomIds = new Set<string>()
+
+      for (const [key, presences] of Object.entries(state)) {
+        if (!key.startsWith('room_')) continue
+        const list = presences as unknown as EphemeralRoomAdvertisement[]
+        if (list.length === 0) continue
+        const latest = list[list.length - 1]
+        if (latest.roomId) {
+          seenRoomIds.add(latest.roomId)
+          ephemeralRoomsMap.set(latest.roomId, toLiveRoom(latest))
+        }
+      }
+
+      // Remove any rooms that dropped out of presence
+      for (const existingId of Array.from(ephemeralRoomsMap.keys())) {
+        if (!seenRoomIds.has(existingId)) {
+          ephemeralRoomsMap.delete(existingId)
+        }
+      }
+
+      dispatchUpdate()
+    })
+    .on('broadcast', { event: 'room-advertisement' }, ({ payload }) => {
+      if (payload && payload.roomId) {
+        ephemeralRoomsMap.set(payload.roomId, toLiveRoom(payload as EphemeralRoomAdvertisement))
+        dispatchUpdate()
+      }
+    })
+    .on('broadcast', { event: 'room-ended' }, ({ payload }) => {
+      if (payload && payload.roomId) {
+        ephemeralRoomsMap.delete(payload.roomId)
+        dispatchUpdate()
+      }
+    })
+    .subscribe((status) => {
+      if (status === 'SUBSCRIBED') {
+        // Send a ping so any already active rooms immediately respond with an advertisement
+        try {
+          channel.send({
+            type: 'broadcast',
+            event: 'lobby-ping',
+            payload: { timestamp: Date.now() },
+          })
+        } catch {}
+      }
+    })
+
+  // Initial dispatch
+  dispatchUpdate()
+
+  return () => {
+    try {
+      channel.unsubscribe()
+      if (lobbyChannelInstance === channel) {
+        lobbyChannelInstance = null
+      }
+    } catch {}
+  }
+}
+
+/**
+ * Fetch all currently active ephemeral rooms (zero DB query).
+ */
+export async function fetchRooms(): Promise<{ data: LiveRoom[]; error: string | null }> {
+  return { data: Array.from(ephemeralRoomsMap.values()), error: null }
+}
+
+/**
+ * Create a new ephemeral room session (purely client-generated, zero PostgreSQL storage).
  */
 export async function createRoom(
   input: CreateRoomInput,
-  hostId: string
-): Promise<{ data: DbRoom | null; error: string | null }> {
-  const { data, error } = await supabase
-    .from('rooms')
-    .insert({
-      host_id: hostId,
-      title: input.title,
-      description: input.description ?? null,
-      type: input.type,
-      category: input.category,
-      capacity: input.capacity ?? 20,
-      duration_minutes: input.durationMinutes ?? 45,
-      visibility: input.visibility ?? 'public',
-      tools: input.tools ?? ['reactions', 'thought-graph'],
-      status: 'active',
-    })
-    .select()
-    .single()
-
-  if (error) {
-    console.error('[rooms] createRoom error:', error)
-    return { data: null, error: error.message }
-  }
-
-  // Add host as a member with host role
-  if (data) {
-    const { error: memberErr } = await supabase
-      .from('room_members')
-      .insert({
-        room_id: data.id,
-        user_id: hostId,
-        role: 'host',
-      })
-    if (memberErr) {
-      console.error('[rooms] failed to add host as member:', memberErr)
-    }
-
-    // Log activity event
-    await supabase.from('activity_events').insert({
-      user_id: hostId,
-      room_id: data.id,
-      event_type: input.type === 'audio'
-        ? 'audio-room-started'
-        : input.type === 'video'
-          ? 'video-room-started'
-          : 'room-created',
-      title: `A wavelength formed: "${input.title}"`,
-      subtitle: `${input.type} room · ${input.durationMinutes ?? 45}m`,
-      room_label: input.title,
-      room_type: input.type,
-    })
-  }
-
-  return { data, error: null }
-}
-
-/**
- * Join a room. Enforces capacity and prevents duplicate membership.
- */
-export async function joinRoom(
-  roomId: string,
-  userId: string
-): Promise<{ error: string | null }> {
-  // Check room exists, is active, and has capacity
-  const { data: room, error: roomErr } = await supabase
-    .from('rooms')
-    .select('id, status, capacity, expires_at')
-    .eq('id', roomId)
-    .single()
-
-  if (roomErr || !room) {
-    return { error: 'Room not found.' }
-  }
-  if (room.status !== 'active') {
-    return { error: 'This wavelength has ended.' }
-  }
-  if (room.expires_at && new Date(room.expires_at) < new Date()) {
-    return { error: 'This wavelength has expired.' }
-  }
-
-  // Count current active members
-  const { count } = await supabase
-    .from('room_members')
-    .select('*', { count: 'exact', head: true })
-    .eq('room_id', roomId)
-    .is('left_at', null)
-
-  if ((count ?? 0) >= room.capacity) {
-    return { error: 'Looks like this wavelength is full.' }
-  }
-
-  // Upsert membership (re-joining after leave is allowed)
-  const { error: joinErr } = await supabase
-    .from('room_members')
-    .upsert(
-      { room_id: roomId, user_id: userId, role: 'member', left_at: null, joined_at: new Date().toISOString() },
-      { onConflict: 'room_id,user_id' }
-    )
-
-  if (joinErr) {
-    console.error('[rooms] joinRoom error:', joinErr)
-    return { error: joinErr.message }
-  }
-
-  return { error: null }
-}
-
-/**
- * Leave a room. Sets left_at timestamp.
- */
-export async function leaveRoom(
-  roomId: string,
-  userId: string
-): Promise<{ error: string | null }> {
-  const { error } = await supabase
-    .from('room_members')
-    .update({ left_at: new Date().toISOString() })
-    .eq('room_id', roomId)
-    .eq('user_id', userId)
-
-  if (error) {
-    console.error('[rooms] leaveRoom error:', error)
-    return { error: error.message }
-  }
-  return { error: null }
-}
-
-/**
- * End a room (host only). Sets status to 'ended'.
- */
-export async function endRoom(
-  roomId: string,
   _hostId: string
-): Promise<{ error: string | null }> {
-  const { error } = await supabase
-    .from('rooms')
-    .update({ status: 'ended' })
-    .eq('id', roomId)
+): Promise<{ data: LiveRoom | null; error: string | null }> {
+  const roomId = (typeof crypto !== 'undefined' && crypto.randomUUID)
+    ? crypto.randomUUID()
+    : `room_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
 
-  if (error) {
-    console.error('[rooms] endRoom error:', error)
-    return { error: error.message }
+  const room: LiveRoom = {
+    id: roomId,
+    title: input.title,
+    type: input.type,
+    category: input.category,
+    description: input.description ?? null,
+    visibility: input.visibility ?? 'public',
+    status: 'active',
+    capacity: input.capacity ?? 32,
+    duration_minutes: input.durationMinutes ?? 45,
+    member_count: 1,
+    host_name: 'You',
+    created_at: new Date().toISOString(),
+    expires_at: null,
+    tools: ['reactions', 'thought-graph'],
   }
-  return { error: null }
+
+  ephemeralRoomsMap.set(roomId, room)
+  return { data: room, error: null }
 }
 
 /**
- * Fetch active members of a room.
+ * End an ephemeral room and broadcast notice to the lobby.
  */
-export async function fetchRoomMembers(roomId: string) {
-  const { data, error } = await supabase
-    .from('room_members')
-    .select(`
-      *,
-      profile:profiles(id, display_name, avatar_url, initials)
-    `)
-    .eq('room_id', roomId)
-    .is('left_at', null)
-
-  if (error) {
-    console.error('[rooms] fetchRoomMembers error:', error)
-    return { data: [], error: error.message }
+export async function endRoom(roomId: string, _hostId?: string): Promise<{ error: string | null }> {
+  ephemeralRoomsMap.delete(roomId)
+  if (lobbyChannelInstance) {
+    try {
+      lobbyChannelInstance.send({
+        type: 'broadcast',
+        event: 'room-ended',
+        payload: { roomId },
+      })
+    } catch {}
   }
-  return { data: data ?? [], error: null }
+  return { error: null }
 }
