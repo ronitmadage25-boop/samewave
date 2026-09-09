@@ -39,7 +39,6 @@ export default function MapPage() {
   const topics = useAppStore((s) => s.topics)
   const user = useAppStore((s) => s.user)
   const openAuthModal = useAppStore((s) => s.openAuthModal)
-  const enterRoom = useAppStore((s) => s.enterRoom)
 
   const [selected, setSelected] = useState<Topic | null>(null)
   const [hoveredId, setHoveredId] = useState<string | null>(null)
@@ -95,13 +94,13 @@ export default function MapPage() {
     return edges
   }, [displayedTopics])
 
-  function handleEnter(topicId: string) {
+  function handleEnter(_topicId: string) {
     if (!user) {
       openAuthModal('Sign in with Google to enter this room.')
       return
     }
-    enterRoom(topicId)
-    navigate('/room')
+    // Navigate to real rooms discovery (topic-based rooms now come from DB)
+    navigate('/rooms')
   }
 
   return (

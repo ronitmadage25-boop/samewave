@@ -9,7 +9,6 @@ export default function ResonancePage() {
   const navigate = useNavigate()
   const wavelength = useAppStore((s) => s.wavelength)
   const getTop = useAppStore((s) => s.getTopResonantTopics)
-  const enterRoom = useAppStore((s) => s.enterRoom)
 
   if (!wavelength) {
     navigate('/intent')
@@ -19,9 +18,9 @@ export default function ResonancePage() {
   const top = getTop(4)
   const primary = top[0]
 
-  function handleEnter(topicId: string) {
-    enterRoom(topicId)
-    navigate('/room')
+  function handleEnter(_topicId: string) {
+    // Navigate to live rooms discovery filtered by topic
+    navigate('/rooms')
   }
 
   return (

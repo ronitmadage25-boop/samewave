@@ -59,6 +59,18 @@ export default function App() {
         <Route path="/identity" element={<AppShell><IdentityPage /></AppShell>} />
         <Route path="/discover" element={<AppShell><MapPage /></AppShell>} />
         <Route path="/summary" element={<AppShell><SummaryPage /></AppShell>} />
+
+        {/* Room — has real ID in URL so refresh/share works */}
+        <Route
+          path="/room/:roomId"
+          element={
+            <Suspense fallback={<RoomFallback />}>
+              <RoomPage />
+            </Suspense>
+          }
+        />
+
+        {/* Legacy /room redirect — redirect to rooms if no ID */}
         <Route
           path="/room"
           element={

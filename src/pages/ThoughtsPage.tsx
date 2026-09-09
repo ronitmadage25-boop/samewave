@@ -29,7 +29,6 @@ const PRIORITY_QUESTIONS = [
 export default function ThoughtsPage() {
   const navigate = useNavigate()
   const topics = useAppStore((s) => s.topics)
-  const enterRoom = useAppStore((s) => s.enterRoom)
   const [activeCategory, setActiveCategory] = useState<Category | null>(null)
   const [activeType, setActiveType] = useState<RoomType | null>(null)
   const [votedIds, setVotedIds] = useState<Set<string>>(new Set())
@@ -50,9 +49,8 @@ export default function ThoughtsPage() {
       reactions: Math.floor(Math.random() * 12) + 1,
     })))
 
-  function handleJoinRoom(topicId: string) {
-    enterRoom(topicId)
-    navigate('/room')
+  function handleJoinRoom(_topicId: string) {
+    navigate('/rooms')
   }
 
   function toggleVote(id: string) {

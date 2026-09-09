@@ -1,20 +1,166 @@
 import { create } from 'zustand'
 import type { User, Session } from '@supabase/supabase-js'
 import { supabase, isSupabaseConfigured } from '@/lib/supabase'
-import { getProfileFromUser, type UserProfile } from '@/services/auth'
+import { getProfileFromUser, upsertProfile, type UserProfile } from '@/services/auth'
+import * as RoomService from '@/services/rooms'
+import * as ThoughtService from '@/services/thoughts'
 import type {
   Wavelength, Topic, Room, SavedMoment, Thought,
   ThoughtConnection, ReactionType, ThoughtRelationship, RoomStage,
-  DailySignal, ActivityEvent, SignalReaction, CreateRoomOptions,
+  DailySignal, ActivityEvent, SignalReaction,
   Participant, PresenceState, WhiteboardStroke, WhiteboardPoint,
-  RoomMessage, ThoughtType, PollOption,
+  RoomMessage, ThoughtType, PollOption, LiveRoom, RoomType,
 } from '@/types'
 import { TOPICS } from '@/data/topics'
-import { makeParticipants, makeThoughts, makeSeedConnections, getRandomSimulatedThought } from '@/data/room-content'
-import { DAILY_SIGNALS } from '@/data/daily-signals'
-import { SEED_ACTIVITY } from '@/data/activity'
 
-// ── Scoring ────────────────────────────────────────────────────────────────
+// ── Helpers ────────────────────────────────────────────────────────────────
+function makeReactions() {
+  return [
+    { type: 'relate' as const, count: 0 },
+    { type: 'made-me-think' as const, count: 0 },
+    { type: 'tell-me-more' as const, count: 0 },
+    { type: 'different-take' as const, count: 0 },
+    { type: 'inspired' as const, count: 0 },
+    { type: 'made-me-pause' as const, count: 0 },
+  ]
+}
+
+function mapDbMessageToThought(msg: ThoughtService.DbMessage, currentUserId?: string): Thought {
+  const reactionCounts: Record<string, number> = {}
+  let myReaction: ReactionType | undefined
+
+  if (msg.reactions) {
+    for (const r of msg.reactions) {
+      reactionCounts[r.reaction] = (reactionCounts[r.reaction] || 0) + 1
+      if (r.user_id === currentUserId) {
+        myReaction = r.reaction as ReactionType
+      }
+    }
+  }
+
+  return {
+    id: msg.id,
+    authorId: msg.author_id,
+    authorName: msg.author?.display_name,
+    authorInitials: msg.author?.initials,
+    authorAvatar: msg.author?.avatar_url,
+    type: msg.type,
+    text: msg.content,
+    code: msg.code ?? undefined,
+    language: msg.language ?? undefined,
+    url: msg.url ?? undefined,
+    pollOptions: msg.poll_options?.map(o => ({ ...o, myVote: false })) ?? undefined,
+    createdAt: new Date(msg.created_at).getTime(),
+    reactions: [
+      { type: 'relate' as const, count: reactionCounts['relate'] ?? 0 },
+      { type: 'made-me-think' as const, count: reactionCounts['made-me-think'] ?? 0 },
+      { type: 'tell-me-more' as const, count: reactionCounts['tell-me-more'] ?? 0 },
+      { type: 'different-take' as const, count: reactionCounts['different-take'] ?? 0 },
+      { type: 'inspired' as const, count: reactionCounts['inspired'] ?? 0 },
+      { type: 'made-me-pause' as const, count: reactionCounts['made-me-pause'] ?? 0 },
+    ],
+    myReaction,
+    isPriority: msg.is_priority,
+    parentId: msg.parent_id ?? undefined,
+  }
+}
+
+// ── State Interface ────────────────────────────────────────────────────────
+interface AppState {
+  // Auth & Session
+  user: User | null
+  session: Session | null
+  profile: UserProfile | null
+  authLoading: boolean
+  authModalOpen: boolean
+  authModalReason: string
+  openAuthModal: (reason?: string) => void
+  closeAuthModal: () => void
+  initAuth: () => () => void
+
+  // Core local
+  wavelength: Wavelength | null
+  topics: Topic[]
+  activeRoom: Room | null
+  savedMoments: SavedMoment[]
+  identityWavelengths: string[]
+  activityFeed: ActivityEvent[]
+
+  // Live rooms (from DB)
+  liveRooms: LiveRoom[]
+  liveRoomsLoading: boolean
+  liveRoomsError: string | null
+
+  // Daily signals (from DB)
+  dailySignals: DailySignal[]
+  myDailySignal: DailySignal | null
+  signalsLoading: boolean
+
+  // Room loading state
+  roomLoading: boolean
+  roomError: string | null
+
+  // ── Intent & Discovery ──────────────────────────────────────────────────
+  broadcastIntent: (text: string, category: Wavelength['category']) => void
+  getTopResonantTopics: (n?: number) => Topic[]
+
+  // ── Rooms Discovery ───────────────────────────────────────────────────
+  fetchLiveRooms: () => Promise<void>
+
+  // ── Room Lifecycle (local UI state) ─────────────────────────────────────
+  leaveRoom: () => void
+  setRoomStage: (stage: RoomStage) => void
+  endRoom: () => void
+  saveMoment: () => void
+  resetJourney: () => void
+  setActiveRoom: (room: Room | null) => void
+
+  // ── Participants (real presence updates) ─────────────────────────────────
+  setParticipants: (participants: Participant[]) => void
+  addParticipant: (p: Participant) => void
+  removeParticipant: (userId: string) => void
+  updateParticipant: (userId: string, updates: Partial<Participant>) => void
+  toggleMuteSelf: () => void
+  toggleVideoSelf: () => void
+  raiseHandSelf: () => void
+  setParticipantPresence: (participantId: string, state: PresenceState) => void
+  setParticipantSpeaking: (participantId: string, speaking: boolean) => void
+  setParticipantReactionEmoji: (participantId: string, emoji: string | undefined) => void
+
+  // ── Thoughts (real DB + optimistic) ─────────────────────────────────────
+  addThought: (text: string, type?: ThoughtType, extra?: {
+    code?: string; language?: string; url?: string;
+    pollOptions?: PollOption[]; parentId?: string;
+  }) => Promise<void>
+  addThoughtFromRealtime: (thought: Thought) => void
+  markPriority: (thoughtId: string) => void
+  reactToThought: (thoughtId: string, reaction: ReactionType) => Promise<void>
+  connectThoughts: (fromId: string, toId: string, relationship: ThoughtRelationship) => Promise<void>
+  addConnectionFromRealtime: (connection: ThoughtConnection) => void
+  replyToThought: (parentId: string, text: string) => Promise<void>
+  votePoll: (thoughtId: string, optionId: string) => void
+
+  // ── Messages ────────────────────────────────────────────────────────────
+  sendMessage: (text: string) => void
+
+  // ── Whiteboard (local + broadcast) ──────────────────────────────────────
+  addStroke: (stroke: WhiteboardStroke) => void
+  addPointToStroke: (strokeId: string, point: WhiteboardPoint) => void
+  completeStroke: (strokeId: string) => void
+  undoStroke: () => void
+  clearWhiteboard: () => void
+
+  // ── Daily Signals (real DB) ──────────────────────────────────────────────
+  fetchDailySignals: () => Promise<void>
+  publishDailySignal: (text: string) => Promise<{ error: string | null }>
+  reactToDailySignal: (signalId: string, reaction: SignalReaction) => Promise<void>
+
+  // ── Activity ─────────────────────────────────────────────────────────────
+  addActivityEvent: (event: Omit<ActivityEvent, 'id' | 'timestamp'>) => void
+  fetchActivityEvents: () => Promise<void>
+}
+
+// ── Scoring (kept for Intent/Resonance UX flow) ────────────────────────────
 function scoreResonance(intentText: string, topic: Topic): number {
   const words = intentText.toLowerCase().split(/\W+/).filter(Boolean)
   const label = topic.label.toLowerCase()
@@ -33,100 +179,6 @@ function scoreResonance(intentText: string, topic: Topic): number {
   score += bump(socialWords, 'Social')
   score += bump(lifeWords, 'Lifestyle')
   return Math.max(12, Math.min(97, score))
-}
-
-// ── Helpers ────────────────────────────────────────────────────────────────
-function makeReactions() {
-  return [
-    { type: 'relate' as const, count: 0 },
-    { type: 'made-me-think' as const, count: 0 },
-    { type: 'tell-me-more' as const, count: 0 },
-    { type: 'different-take' as const, count: 0 },
-    { type: 'inspired' as const, count: 0 },
-    { type: 'made-me-pause' as const, count: 0 },
-  ]
-}
-
-// ── State Interface ────────────────────────────────────────────────────────
-interface AppState {
-  // Auth & Session (Google Auth only, no application database)
-  user: User | null
-  session: Session | null
-  profile: UserProfile | null
-  authLoading: boolean
-  authModalOpen: boolean
-  authModalReason: string
-  openAuthModal: (reason?: string) => void
-  closeAuthModal: () => void
-  initAuth: () => () => void
-
-  // Core
-  wavelength: Wavelength | null
-  topics: Topic[]
-  activeRoom: Room | null
-  savedMoments: SavedMoment[]
-  identityWavelengths: string[]
-  dailySignals: DailySignal[]
-  myDailySignal: DailySignal | null
-  activityFeed: ActivityEvent[]
-
-  // Simulation
-  simulationTimer: ReturnType<typeof setInterval> | null
-  typingParticipantId: string | null
-
-  // ── Intent & Discovery ──────────────────────────────────────────────────
-  broadcastIntent: (text: string, category: Wavelength['category']) => void
-  getTopResonantTopics: (n?: number) => Topic[]
-
-  // ── Room Lifecycle ──────────────────────────────────────────────────────
-  enterRoom: (topicId: string) => void
-  createRoom: (opts: CreateRoomOptions) => void
-  leaveRoom: () => void
-  setRoomStage: (stage: RoomStage) => void
-  endRoom: () => void
-  saveMoment: () => void
-  resetJourney: () => void
-
-  // ── Thoughts ────────────────────────────────────────────────────────────
-  addThought: (text: string, type?: ThoughtType, extra?: {
-    code?: string; language?: string; url?: string;
-    pollOptions?: PollOption[]; parentId?: string;
-  }) => void
-  markPriority: (thoughtId: string) => void
-  reactToThought: (thoughtId: string, reaction: ReactionType) => void
-  connectThoughts: (fromId: string, toId: string, relationship: ThoughtRelationship) => void
-  replyToThought: (parentId: string, text: string) => void
-  votePoll: (thoughtId: string, optionId: string) => void
-
-  // ── Messages ────────────────────────────────────────────────────────────
-  sendMessage: (text: string) => void
-
-  // ── Participants ────────────────────────────────────────────────────────
-  toggleMuteSelf: () => void
-  toggleVideoSelf: () => void
-  raiseHandSelf: () => void
-  setParticipantPresence: (participantId: string, state: PresenceState) => void
-  setParticipantSpeaking: (participantId: string, speaking: boolean) => void
-  setParticipantReactionEmoji: (participantId: string, emoji: string | undefined) => void
-
-  // ── Whiteboard ──────────────────────────────────────────────────────────
-  addStroke: (stroke: WhiteboardStroke) => void
-  addPointToStroke: (strokeId: string, point: WhiteboardPoint) => void
-  completeStroke: (strokeId: string) => void
-  undoStroke: () => void
-  clearWhiteboard: () => void
-
-  // ── Simulation ──────────────────────────────────────────────────────────
-  startSimulation: () => void
-  stopSimulation: () => void
-  _simulationTick: () => void
-
-  // ── Daily Signals ────────────────────────────────────────────────────────
-  publishDailySignal: (text: string) => void
-  reactToDailySignal: (signalId: string, reaction: SignalReaction) => void
-
-  // ── Activity ─────────────────────────────────────────────────────────────
-  addActivityEvent: (event: Omit<ActivityEvent, 'id' | 'timestamp'>) => void
 }
 
 // ── Store ──────────────────────────────────────────────────────────────────
@@ -158,6 +210,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       if (session?.user) {
         const profile = getProfileFromUser(session.user)
         set({ user: session.user, session, profile, authLoading: false })
+        // Sync profile to DB
+        upsertProfile(session.user).catch(console.error)
       } else {
         set({ user: null, session: null, profile: null, authLoading: false })
       }
@@ -168,6 +222,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       if (session?.user) {
         const profile = getProfileFromUser(session.user)
         set({ user: session.user, session, profile, authLoading: false })
+        // Sync profile to DB on sign-in
+        upsertProfile(session.user).catch(console.error)
       } else {
         set({ user: null, session: null, profile: null, authLoading: false })
       }
@@ -183,13 +239,17 @@ export const useAppStore = create<AppState>((set, get) => ({
   activeRoom: null,
   savedMoments: [],
   identityWavelengths: ['Building', 'Learning', 'Exploring'],
-  dailySignals: DAILY_SIGNALS,
+  activityFeed: [],
+  liveRooms: [],
+  liveRoomsLoading: false,
+  liveRoomsError: null,
+  dailySignals: [],
   myDailySignal: null,
-  activityFeed: SEED_ACTIVITY,
-  simulationTimer: null,
-  typingParticipantId: null,
+  signalsLoading: false,
+  roomLoading: false,
+  roomError: null,
 
-  // ── Intent ─────────────────────────────────────────────────────────────
+  // ── Intent (local scoring — for discovery UX) ───────────────────────────
   broadcastIntent: (text, category) => {
     const topics = get().topics.map((t) => ({ ...t, resonance: scoreResonance(text, t) }))
     set({ wavelength: { text, category, broadcastAt: Date.now() }, topics })
@@ -198,75 +258,39 @@ export const useAppStore = create<AppState>((set, get) => ({
   getTopResonantTopics: (n = 3) =>
     [...get().topics].sort((a, b) => (b.resonance ?? 0) - (a.resonance ?? 0)).slice(0, n),
 
-  // ── Room Lifecycle ──────────────────────────────────────────────────────
-  enterRoom: (topicId) => {
-    const topic = get().topics.find((t) => t.id === topicId)
-    if (!topic) return
-    const participants = makeParticipants(Math.min(topic.mindsCount, 8))
-    const thoughts = makeThoughts(topicId, participants)
-    const connections = makeSeedConnections(thoughts)
-    const room: Room = {
-      topicId,
-      topicLabel: topic.label,
-      type: topic.type,
-      stage: 'arrive',
-      startedAt: Date.now(),
-      durationMinutes: topic.minutesRemaining,
-      participants,
-      thoughts,
-      connections,
-      messages: [],
-      whiteboard: [],
-      capacity: 50,
-      visibility: 'public',
-      tools: ['reactions', 'thought-graph', 'priority-questions', 'whiteboard'],
+  // ── Live Rooms (real DB) ────────────────────────────────────────────────
+  fetchLiveRooms: async () => {
+    set({ liveRoomsLoading: true, liveRoomsError: null })
+    const { data, error } = await RoomService.fetchRooms()
+    if (error) {
+      set({ liveRoomsLoading: false, liveRoomsError: error })
+      return
     }
-    set({ activeRoom: room })
-    get().addActivityEvent({
-      type: 'joined-room',
-      title: `You joined ${topic.label}`,
-      subtitle: `${topic.mindsCount} minds in the room`,
-      roomLabel: topic.label,
-      roomType: topic.type,
-    })
-    setTimeout(() => get().startSimulation(), 1500)
+    const liveRooms: LiveRoom[] = data.map(r => ({
+      id: r.id,
+      title: r.title,
+      type: r.type,
+      category: r.category,
+      description: r.description,
+      visibility: r.visibility,
+      status: r.status,
+      capacity: r.capacity,
+      duration_minutes: r.duration_minutes,
+      member_count: r.member_count ?? 0,
+      host_name: r.host_name,
+      host_avatar: r.host_avatar,
+      host_initials: r.host_initials,
+      created_at: r.created_at,
+      expires_at: r.expires_at,
+      tools: r.tools,
+    }))
+    set({ liveRooms, liveRoomsLoading: false })
   },
 
-  createRoom: (opts) => {
-    const participants = makeParticipants(2)
-    const room: Room = {
-      topicId: `custom-${Date.now()}`,
-      topicLabel: opts.title,
-      type: opts.type,
-      stage: 'arrive',
-      startedAt: Date.now(),
-      durationMinutes: opts.durationMinutes ?? 45,
-      participants,
-      thoughts: [],
-      connections: [],
-      messages: [],
-      whiteboard: [],
-      capacity: opts.capacity ?? 20,
-      visibility: opts.visibility ?? 'public',
-      tools: opts.tools ?? ['reactions', 'thought-graph', 'whiteboard'],
-      description: opts.description,
-    }
-    set({ activeRoom: room })
-    const evType = opts.type === 'audio' ? 'audio-room-started' as const
-      : opts.type === 'video' ? 'video-room-started' as const
-      : 'room-created' as const
-    get().addActivityEvent({
-      type: evType,
-      title: `You created "${opts.title}"`,
-      subtitle: `${opts.type} room · ${opts.durationMinutes ?? 45}m`,
-      roomLabel: opts.title,
-      roomType: opts.type,
-    })
-    setTimeout(() => get().startSimulation(), 2000)
-  },
+  // ── Room UI State ────────────────────────────────────────────────────────
+  setActiveRoom: (room) => set({ activeRoom: room }),
 
   leaveRoom: () => {
-    get().stopSimulation()
     set({ activeRoom: null })
   },
 
@@ -277,9 +301,12 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   endRoom: () => {
-    get().stopSimulation()
     const room = get().activeRoom
     if (!room) return
+    const user = get().user
+    if (user) {
+      RoomService.endRoom(room.id, user.id).catch(console.error)
+    }
     set({ activeRoom: { ...room, stage: 'wrap' } })
   },
 
@@ -308,143 +335,37 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   resetJourney: () => {
-    get().stopSimulation()
     set({ activeRoom: null })
   },
 
-  // ── Thoughts ────────────────────────────────────────────────────────────
-  addThought: (text, type = 'thought', extra = {}) => {
-    const room = get().activeRoom
-    if (!room) return
-    const thought: Thought = {
-      id: `t-self-${Date.now()}`,
-      authorId: 'self',
-      type,
-      text,
-      createdAt: Date.now(),
-      reactions: makeReactions(),
-      isPriority: type === 'question',
-      ...extra,
-    }
-    set({ activeRoom: { ...room, thoughts: [...room.thoughts, thought] } })
-    if (type === 'question') {
-      get().addActivityEvent({
-        type: 'priority-question',
-        title: 'You asked a priority question',
-        subtitle: `"${text.slice(0, 60)}"`,
-        roomLabel: room.topicLabel,
-        roomType: room.type,
-      })
-    }
-  },
-
-  markPriority: (thoughtId) => {
-    const room = get().activeRoom
-    if (!room) return
-    const thoughts = room.thoughts.map((t) =>
-      t.id === thoughtId ? { ...t, isPriority: !t.isPriority } : t
-    )
-    set({ activeRoom: { ...room, thoughts } })
-  },
-
-  reactToThought: (thoughtId, reaction) => {
-    const room = get().activeRoom
-    if (!room) return
-    const thoughts = room.thoughts.map((t) => {
-      if (t.id !== thoughtId) return t
-      const hadSame = t.myReaction === reaction
-      const reactions = t.reactions.map((r) => {
-        if (r.type === reaction) return { ...r, count: r.count + (hadSame ? -1 : 1) }
-        if (r.type === t.myReaction) return { ...r, count: Math.max(0, r.count - 1) }
-        return r
-      })
-      return { ...t, reactions, myReaction: hadSame ? undefined : reaction }
-    })
-    set({ activeRoom: { ...room, thoughts } })
-    get().addActivityEvent({
-      type: 'reaction-received',
-      title: `You reacted to a thought`,
-      subtitle: `in ${room.topicLabel}`,
-      roomLabel: room.topicLabel,
-    })
-  },
-
-  connectThoughts: (fromId, toId, relationship) => {
-    const room = get().activeRoom
-    if (!room) return
-    // Check for duplicate
-    const exists = room.connections.some(
-      (c) => c.fromThoughtId === fromId && c.toThoughtId === toId
-    )
-    if (exists) return
-    const connection: ThoughtConnection = {
-      id: `c-${Date.now()}`,
-      fromThoughtId: fromId,
-      toThoughtId: toId,
-      relationship,
-    }
-    set({ activeRoom: { ...room, connections: [...room.connections, connection] } })
-    get().addActivityEvent({
-      type: 'connection-created',
-      title: 'Thought connection formed',
-      subtitle: `"${relationship}" link between 2 ideas`,
-      roomLabel: room.topicLabel,
-      roomType: room.type,
-    })
-  },
-
-  replyToThought: (parentId, text) => {
-    const room = get().activeRoom
-    if (!room) return
-    const reply: Thought = {
-      id: `t-reply-${Date.now()}`,
-      authorId: 'self',
-      type: 'thought',
-      text,
-      createdAt: Date.now(),
-      reactions: makeReactions(),
-      parentId,
-    }
-    const thoughts = room.thoughts.map((t) =>
-      t.id === parentId ? { ...t, replies: [...(t.replies ?? []), reply] } : t
-    )
-    set({ activeRoom: { ...room, thoughts } })
-  },
-
-  votePoll: (thoughtId, optionId) => {
-    const room = get().activeRoom
-    if (!room) return
-    const thoughts = room.thoughts.map((t) => {
-      if (t.id !== thoughtId || !t.pollOptions) return t
-      const alreadyVoted = t.pollOptions.some((o) => o.myVote)
-      const pollOptions = t.pollOptions.map((o) => {
-        if (o.id === optionId) {
-          return { ...o, votes: o.myVote ? o.votes - 1 : o.votes + 1, myVote: !o.myVote }
-        }
-        if (alreadyVoted && o.myVote) {
-          return { ...o, votes: Math.max(0, o.votes - 1), myVote: false }
-        }
-        return o
-      })
-      return { ...t, pollOptions }
-    })
-    set({ activeRoom: { ...room, thoughts } })
-  },
-
-  // ── Messages ─────────────────────────────────────────────────────────────
-  sendMessage: (text) => {
-    const room = get().activeRoom
-    if (!room) return
-    const msg: RoomMessage = {
-      id: `msg-${Date.now()}`,
-      authorId: 'self',
-      text,
-      timestamp: Date.now(),
-    }
-    set({ activeRoom: { ...room, messages: [...room.messages, msg] } })
-  },
-
   // ── Participants ──────────────────────────────────────────────────────────
+  setParticipants: (participants) => {
+    const room = get().activeRoom
+    if (!room) return
+    set({ activeRoom: { ...room, participants } })
+  },
+
+  addParticipant: (p) => {
+    const room = get().activeRoom
+    if (!room) return
+    // Don't add if already present
+    if (room.participants.some(existing => existing.id === p.id)) return
+    set({ activeRoom: { ...room, participants: [...room.participants, p] } })
+  },
+
+  removeParticipant: (userId) => {
+    const room = get().activeRoom
+    if (!room) return
+    set({ activeRoom: { ...room, participants: room.participants.filter(p => p.id !== userId) } })
+  },
+
+  updateParticipant: (userId, updates) => {
+    const room = get().activeRoom
+    if (!room) return
+    const participants = room.participants.map(p => p.id === userId ? { ...p, ...updates } : p)
+    set({ activeRoom: { ...room, participants } })
+  },
+
   toggleMuteSelf: () => {
     const room = get().activeRoom
     if (!room) return
@@ -501,6 +422,229 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ activeRoom: { ...room, participants } })
   },
 
+  // ── Thoughts (real DB + optimistic) ──────────────────────────────────────
+  addThought: async (text, type = 'thought', extra = {}) => {
+    const room = get().activeRoom
+    const user = get().user
+    const profile = get().profile
+    if (!room || !user) return
+
+    // Optimistic update
+    const tempId = `temp-${Date.now()}`
+    const tempThought: Thought = {
+      id: tempId,
+      authorId: user.id,
+      authorName: profile?.displayName,
+      authorInitials: profile?.initials,
+      authorAvatar: profile?.avatarUrl,
+      type,
+      text,
+      code: extra.code,
+      language: extra.language,
+      url: extra.url,
+      pollOptions: extra.pollOptions,
+      createdAt: Date.now(),
+      reactions: makeReactions(),
+      isPriority: type === 'question',
+      parentId: extra.parentId,
+    }
+    set({ activeRoom: { ...room, thoughts: [...room.thoughts, tempThought] } })
+
+    // Real DB insert
+    const { data, error } = await ThoughtService.addThought({
+      roomId: room.id,
+      authorId: user.id,
+      type,
+      content: text,
+      code: extra.code,
+      language: extra.language,
+      url: extra.url,
+      pollOptions: extra.pollOptions,
+      parentId: extra.parentId,
+    })
+
+    if (error) {
+      console.warn('[store] addThought DB insert notice (kept optimistically):', error)
+    }
+
+    // Replace temp with real thought from DB if available
+    if (data) {
+      const realThought = mapDbMessageToThought(data, user.id)
+      const currentRoom = get().activeRoom
+      if (currentRoom) {
+        set({
+          activeRoom: {
+            ...currentRoom,
+            thoughts: currentRoom.thoughts.map(t => t.id === tempId ? realThought : t),
+          },
+        })
+      }
+    }
+
+    // Broadcast thought to other devices via Realtime channel
+    const thoughtToBroadcast = data ? mapDbMessageToThought(data, user.id) : tempThought
+    try {
+      supabase.channel(`room:${room.id}`).send({
+        type: 'broadcast',
+        event: 'thought-broadcast',
+        payload: thoughtToBroadcast,
+      })
+    } catch {}
+  },
+
+  addThoughtFromRealtime: (thought) => {
+    const room = get().activeRoom
+    if (!room) return
+    // Skip if thought already exists (from our own optimistic insert)
+    if (room.thoughts.some(t => t.id === thought.id)) return
+    set({ activeRoom: { ...room, thoughts: [...room.thoughts, thought] } })
+  },
+
+  markPriority: (thoughtId) => {
+    const room = get().activeRoom
+    if (!room) return
+    const thoughts = room.thoughts.map((t) =>
+      t.id === thoughtId ? { ...t, isPriority: !t.isPriority } : t
+    )
+    set({ activeRoom: { ...room, thoughts } })
+    ThoughtService.markPriority(thoughtId, !room.thoughts.find(t => t.id === thoughtId)?.isPriority)
+      .catch(console.error)
+  },
+
+  reactToThought: async (thoughtId, reaction) => {
+    const room = get().activeRoom
+    const user = get().user
+    if (!room || !user) return
+
+    const existing = room.thoughts.find(t => t.id === thoughtId)
+    const hadSame = existing?.myReaction === reaction
+
+    // Optimistic update
+    const thoughts = room.thoughts.map((t) => {
+      if (t.id !== thoughtId) return t
+      const reactions = t.reactions.map((r) => {
+        if (r.type === reaction) return { ...r, count: r.count + (hadSame ? -1 : 1) }
+        if (r.type === t.myReaction) return { ...r, count: Math.max(0, r.count - 1) }
+        return r
+      })
+      return { ...t, reactions, myReaction: hadSame ? undefined : reaction }
+    })
+    set({ activeRoom: { ...room, thoughts } })
+
+    // Broadcast reaction to other devices
+    try {
+      supabase.channel(`room:${room.id}`).send({
+        type: 'broadcast',
+        event: 'reaction-broadcast',
+        payload: { messageId: thoughtId, reaction, userId: user.id },
+      })
+    } catch {}
+
+    // Real DB update
+    await ThoughtService.reactToThought(thoughtId, user.id, reaction, existing?.myReaction).catch(() => {})
+  },
+
+  connectThoughts: async (fromId, toId, relationship) => {
+    const room = get().activeRoom
+    const user = get().user
+    if (!room || !user) return
+
+    // Check for duplicate
+    const exists = room.connections.some(
+      (c) => c.fromThoughtId === fromId && c.toThoughtId === toId
+    )
+    if (exists) return
+
+    // Optimistic
+    const tempConnection: ThoughtConnection = {
+      id: `temp-c-${Date.now()}`,
+      fromThoughtId: fromId,
+      toThoughtId: toId,
+      relationship,
+    }
+    set({ activeRoom: { ...room, connections: [...room.connections, tempConnection] } })
+
+    // Broadcast connection to other devices
+    try {
+      supabase.channel(`room:${room.id}`).send({
+        type: 'broadcast',
+        event: 'connection-broadcast',
+        payload: tempConnection,
+      })
+    } catch {}
+
+    const { data, error } = await ThoughtService.connectThoughts(room.id, fromId, toId, relationship, user.id)
+    if (error) {
+      console.warn('[store] connectThoughts DB notice (kept optimistically):', error)
+      return
+    }
+
+    if (data) {
+      const realConnection: ThoughtConnection = {
+        id: data.id,
+        fromThoughtId: data.from_message_id,
+        toThoughtId: data.to_message_id,
+        relationship: data.relationship,
+      }
+      const currentRoom = get().activeRoom
+      if (currentRoom) {
+        set({
+          activeRoom: {
+            ...currentRoom,
+            connections: currentRoom.connections.map(c => c.id === tempConnection.id ? realConnection : c),
+          },
+        })
+      }
+    }
+  },
+
+  addConnectionFromRealtime: (connection) => {
+    const room = get().activeRoom
+    if (!room) return
+    if (room.connections.some(c => c.id === connection.id)) return
+    set({ activeRoom: { ...room, connections: [...room.connections, connection] } })
+  },
+
+  replyToThought: async (parentId, text) => {
+    await get().addThought(text, 'thought', { parentId })
+  },
+
+  votePoll: (thoughtId, optionId) => {
+    const room = get().activeRoom
+    const user = get().user
+    if (!room || !user) return
+    const thoughts = room.thoughts.map((t) => {
+      if (t.id !== thoughtId || !t.pollOptions) return t
+      const alreadyVoted = t.pollOptions.some((o) => o.myVote)
+      const pollOptions = t.pollOptions.map((o) => {
+        if (o.id === optionId) {
+          return { ...o, votes: o.myVote ? o.votes - 1 : o.votes + 1, myVote: !o.myVote }
+        }
+        if (alreadyVoted && o.myVote) {
+          return { ...o, votes: Math.max(0, o.votes - 1), myVote: false }
+        }
+        return o
+      })
+      return { ...t, pollOptions }
+    })
+    set({ activeRoom: { ...room, thoughts } })
+    // Persist to DB
+    ThoughtService.votePoll(thoughtId, optionId, user.id).catch(console.error)
+  },
+
+  // ── Messages ─────────────────────────────────────────────────────────────
+  sendMessage: (text) => {
+    const room = get().activeRoom
+    if (!room) return
+    const msg: RoomMessage = {
+      id: `msg-${Date.now()}`,
+      authorId: 'self',
+      text,
+      timestamp: Date.now(),
+    }
+    set({ activeRoom: { ...room, messages: [...room.messages, msg] } })
+  },
+
   // ── Whiteboard ────────────────────────────────────────────────────────────
   addStroke: (stroke) => {
     const room = get().activeRoom
@@ -528,10 +672,11 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   undoStroke: () => {
     const room = get().activeRoom
+    const user = get().user
     if (!room) return
-    // Remove the last self stroke
+    const selfId = user?.id ?? 'self'
     const idx = [...room.whiteboard].reverse().findIndex(
-      (s) => s.participantId === 'self' && s.completed
+      (s) => s.participantId === selfId && s.completed
     )
     if (idx === -1) return
     const realIdx = room.whiteboard.length - 1 - idx
@@ -543,141 +688,92 @@ export const useAppStore = create<AppState>((set, get) => ({
     const room = get().activeRoom
     if (!room) return
     set({ activeRoom: { ...room, whiteboard: [] } })
-    get().addActivityEvent({
-      type: 'whiteboard-activity',
-      title: 'Whiteboard cleared',
-      subtitle: `in ${room.topicLabel}`,
-      roomLabel: room.topicLabel,
-    })
   },
 
-  // ── Simulation Engine ─────────────────────────────────────────────────────
-  startSimulation: () => {
-    const existing = get().simulationTimer
-    if (existing) return
-    const timer = setInterval(() => get()._simulationTick(), 4000)
-    set({ simulationTimer: timer })
-  },
-
-  stopSimulation: () => {
-    const timer = get().simulationTimer
-    if (timer) clearInterval(timer)
-    set({ simulationTimer: null, typingParticipantId: null })
-  },
-
-  _simulationTick: () => {
-    const room = get().activeRoom
-    if (!room || room.stage === 'wrap') {
-      get().stopSimulation()
+  // ── Daily Signals (real DB) ───────────────────────────────────────────────
+  fetchDailySignals: async () => {
+    const { fetchTodaysSignals } = await import('@/services/auth')
+    set({ signalsLoading: true })
+    const { data, error } = await fetchTodaysSignals()
+    if (error) {
+      console.error('[store] fetchDailySignals error:', error)
+      set({ signalsLoading: false })
       return
     }
 
-    const others = room.participants.filter((p) => !p.isSelf)
-    if (others.length === 0) return
-
-    const rand = Math.random()
-    const pick = others[Math.floor(Math.random() * others.length)]
-
-    // 35%: simulate speaking (for audio/video rooms)
-    if (rand < 0.35 && (room.type === 'audio' || room.type === 'video')) {
-      get().setParticipantSpeaking(pick.id, true)
-      setTimeout(() => get().setParticipantSpeaking(pick.id, false), 2500 + Math.random() * 2000)
-    }
-    // 20%: simulate typing → thought
-    else if (rand < 0.55 && room.thoughts.length < 14) {
-      set({ typingParticipantId: pick.id })
-      setTimeout(() => {
-        set({ typingParticipantId: null })
-        const currentRoom = get().activeRoom
-        if (!currentRoom) return
-        const thought: Thought = {
-          id: `t-sim-${Date.now()}`,
-          authorId: pick.id,
-          type: 'thought',
-          text: getRandomSimulatedThought(),
-          createdAt: Date.now(),
-          reactions: makeReactions(),
-        }
-        set({ activeRoom: { ...currentRoom, thoughts: [...currentRoom.thoughts, thought] } })
-      }, 2000 + Math.random() * 1500)
-    }
-    // 15%: simulate reaction on a thought
-    else if (rand < 0.70 && room.thoughts.length > 0) {
-      const thought = room.thoughts[Math.floor(Math.random() * room.thoughts.length)]
-      const types: ReactionType[] = ['relate', 'made-me-think', 'tell-me-more', 'inspired']
-      const reactionType = types[Math.floor(Math.random() * types.length)]
-      const currentRoom = get().activeRoom
-      if (!currentRoom) return
-      const thoughts = currentRoom.thoughts.map((t) => {
-        if (t.id !== thought.id) return t
-        return {
-          ...t,
-          reactions: t.reactions.map((r) =>
-            r.type === reactionType ? { ...r, count: r.count + 1 } : r
-          ),
-        }
-      })
-      set({ activeRoom: { ...currentRoom, thoughts } })
-    }
-    // 10%: simulate emoji reaction floating
-    else if (rand < 0.80) {
-      const emojis = ['✨', '💡', '🔥', '👏', '🤔', '💯']
-      const emoji = emojis[Math.floor(Math.random() * emojis.length)]
-      get().setParticipantReactionEmoji(pick.id, emoji)
-      setTimeout(() => get().setParticipantReactionEmoji(pick.id, undefined), 1800)
-    }
-    // 5%: simulated participant joins (if not full)
-    else if (rand < 0.85 && room.participants.length < (room.capacity ?? 20)) {
-      const newPerson: Participant = {
-        id: `p-sim-${Date.now()}`,
-        name: ['Karan', 'Simran', 'Rohan', 'Ayesha', 'Rahul'][Math.floor(Math.random() * 5)],
-        initials: 'KS',
-        colorSeed: Math.floor(Math.random() * 12),
-        presenceState: 'active',
-        isMuted: false,
-        hasVideo: true,
-        handRaised: false,
+    const user = get().user
+    const signals: DailySignal[] = data.map(s => {
+      const reactionMap: Record<string, number> = {}
+      let myReaction: SignalReaction | undefined
+      for (const r of s.reactions ?? []) {
+        reactionMap[r.reaction] = (reactionMap[r.reaction] ?? 0) + 1
+        if (r.user_id === user?.id) myReaction = r.reaction as SignalReaction
       }
-      const currentRoom = get().activeRoom
-      if (!currentRoom) return
-      set({ activeRoom: { ...currentRoom, participants: [...currentRoom.participants, newPerson] } })
-      get().addActivityEvent({
-        type: 'participant-joined',
-        title: `${newPerson.name} joined the room`,
-        subtitle: currentRoom.topicLabel,
-        roomLabel: currentRoom.topicLabel,
-      })
-    }
+      return {
+        id: s.id,
+        text: s.content,
+        authorId: s.user_id,
+        authorName: s.profile?.display_name ?? 'Wave Rider',
+        authorInitials: s.profile?.initials ?? 'WR',
+        authorAvatar: s.profile?.avatar_url ?? null,
+        colorSeed: s.user_id.charCodeAt(0) % 12,
+        publishedAt: new Date(s.created_at).getTime(),
+        reactions: {
+          resonated: reactionMap['resonated'] ?? 0,
+          inspired: reactionMap['inspired'] ?? 0,
+          'made-me-pause': reactionMap['made-me-pause'] ?? 0,
+          'different-perspective': reactionMap['different-perspective'] ?? 0,
+        },
+        myReaction,
+      }
+    })
+
+    const mySignal = user ? signals.find(s => s.authorId === user.id) ?? null : null
+    set({ dailySignals: signals, myDailySignal: mySignal, signalsLoading: false })
   },
 
-  // ── Daily Signals ─────────────────────────────────────────────────────────
-  publishDailySignal: (text) => {
-    const signal: DailySignal = {
-      id: `ds-self-${Date.now()}`,
-      text,
-      authorId: 'self',
-      authorName: 'You',
-      authorInitials: 'YOU',
-      colorSeed: 99,
-      publishedAt: Date.now(),
+  publishDailySignal: async (text) => {
+    const user = get().user
+    if (!user) {
+      get().openAuthModal('Sign in to publish your Daily Signal.')
+      return { error: 'Not authenticated.' }
+    }
+
+    const { publishDailySignal } = await import('@/services/auth')
+    const { data, error } = await publishDailySignal(user.id, text)
+    if (error || !data) return { error: error ?? 'Failed to publish signal.' }
+
+    const newSignal: DailySignal = {
+      id: data.id,
+      text: data.content,
+      authorId: data.user_id,
+      authorName: data.profile?.display_name ?? get().profile?.displayName ?? 'Wave Rider',
+      authorInitials: data.profile?.initials ?? get().profile?.initials ?? 'WR',
+      authorAvatar: data.profile?.avatar_url ?? get().profile?.avatarUrl ?? null,
+      colorSeed: data.user_id.charCodeAt(0) % 12,
+      publishedAt: new Date(data.created_at).getTime(),
       reactions: { resonated: 0, inspired: 0, 'made-me-pause': 0, 'different-perspective': 0 },
     }
+
     set((s) => ({
-      myDailySignal: signal,
-      dailySignals: [signal, ...s.dailySignals],
+      myDailySignal: newSignal,
+      dailySignals: [newSignal, ...s.dailySignals],
     }))
-    get().addActivityEvent({
-      type: 'signal-published',
-      title: 'You published a Daily Signal',
-      subtitle: `"${text.slice(0, 60)}${text.length > 60 ? '…' : ''}"`,
-    })
+
+    return { error: null }
   },
 
-  reactToDailySignal: (signalId, reaction) => {
+  reactToDailySignal: async (signalId, reaction) => {
+    const user = get().user
+    if (!user) return
+
+    const existing = get().dailySignals.find(s => s.id === signalId)
+    const hadSame = existing?.myReaction === reaction
+
+    // Optimistic update
     set((s) => ({
       dailySignals: s.dailySignals.map((sig) => {
         if (sig.id !== signalId) return sig
-        const hadSame = sig.myReaction === reaction
         const reactions = { ...sig.reactions }
         if (hadSame) {
           reactions[reaction] = Math.max(0, reactions[reaction] - 1)
@@ -688,11 +784,56 @@ export const useAppStore = create<AppState>((set, get) => ({
         return { ...sig, reactions, myReaction: reaction }
       }),
     }))
+
+    const { reactToSignal } = await import('@/services/auth')
+    await reactToSignal(signalId, user.id, reaction, existing?.myReaction)
   },
 
   // ── Activity ──────────────────────────────────────────────────────────────
   addActivityEvent: (event) => {
     const newEvent: ActivityEvent = { ...event, id: `ae-${Date.now()}`, timestamp: Date.now() }
     set((s) => ({ activityFeed: [newEvent, ...s.activityFeed] }))
+
+    // Persist to DB if configured
+    const user = get().user
+    const room = get().activeRoom
+    if (user && isSupabaseConfigured()) {
+      supabase.from('activity_events').insert({
+        user_id: user.id,
+        room_id: room?.id ?? null,
+        event_type: event.type as string,
+        title: event.title,
+        subtitle: event.subtitle ?? null,
+        room_label: event.roomLabel ?? null,
+        room_type: event.roomType ?? null,
+        metadata: event.metadata ?? null,
+      }).then(() => {}, console.error)
+    }
+  },
+
+  fetchActivityEvents: async () => {
+    const { data, error } = await supabase
+      .from('activity_events')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(50)
+
+    if (error) {
+      console.error('[store] fetchActivityEvents error:', error)
+      return
+    }
+
+    const events: ActivityEvent[] = (data ?? []).map(e => ({
+      id: e.id,
+      type: e.event_type as ActivityEvent['type'],
+      timestamp: new Date(e.created_at).getTime(),
+      title: e.title,
+      subtitle: e.subtitle ?? undefined,
+      roomLabel: e.room_label ?? undefined,
+      roomType: e.room_type as RoomType | undefined,
+      metadata: e.metadata ?? undefined,
+    }))
+
+    set({ activityFeed: events })
   },
 }))

@@ -17,7 +17,11 @@ const PALETTE = [
 
 const WIDTHS = [2, 5, 12, 24]
 
-export function Whiteboard() {
+interface WhiteboardProps {
+  onBroadcastStroke?: (stroke: WhiteboardStroke) => void
+}
+
+export function Whiteboard({ onBroadcastStroke: _onBroadcastStroke }: WhiteboardProps = {}) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const room = useAppStore((s) => s.activeRoom)
   const addStroke = useAppStore((s) => s.addStroke)
@@ -29,41 +33,10 @@ export function Whiteboard() {
   const [currentWidth, setCurrentWidth] = useState<number>(4)
   const [isDrawing, setIsDrawing] = useState(false)
   const [activeStrokeId, setActiveStrokeId] = useState<string | null>(null)
-  const [remoteCursors, setRemoteCursors] = useState<RemoteCursor[]>([])
+  const [remoteCursors] = useState<RemoteCursor[]>([])
 
   const strokes = room?.whiteboard || []
   const currentStrokePoints = useRef<{ x: number; y: number }[]>([])
-
-  // Simulated remote cursors for feeling alive
-  useEffect(() => {
-    if (!room) return
-    const others = room.participants.filter((p) => !p.isSelf)
-    if (others.length === 0) return
-
-    const timer = setInterval(() => {
-      // Pick 1 or 2 remote users and move their cursor
-      const activePartner = others[Math.floor(Math.random() * others.length)]
-      if (activePartner) {
-        setRemoteCursors((prev) => {
-          const filtered = prev.filter((c) => c.participantId !== activePartner.id)
-          // 80% chance to show cursor, 20% to leave canvas
-          if (Math.random() < 0.8) {
-            const nextCursor: RemoteCursor = {
-              participantId: activePartner.id,
-              name: activePartner.name,
-              color: PALETTE[activePartner.colorSeed % PALETTE.length],
-              x: 100 + Math.random() * 600,
-              y: 80 + Math.random() * 400,
-            }
-            return [...filtered, nextCursor]
-          }
-          return filtered
-        })
-      }
-    }, 2400)
-
-    return () => clearInterval(timer)
-  }, [room])
 
   // Canvas redraw helper
   const redraw = useCallback(() => {

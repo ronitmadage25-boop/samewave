@@ -1,21 +1,11 @@
-import { useEffect } from 'react'
-import { useAppStore } from '@/store/useAppStore'
-
-export function useSimulation(active: boolean = true) {
-  const activeRoom = useAppStore((s) => s.activeRoom)
-  const startSimulation = useAppStore((s) => s.startSimulation)
-  const stopSimulation = useAppStore((s) => s.stopSimulation)
-
-  useEffect(() => {
-    if (!active || !activeRoom) {
-      stopSimulation()
-      return
-    }
-
-    startSimulation()
-
-    return () => {
-      stopSimulation()
-    }
-  }, [active, activeRoom?.topicId, startSimulation, stopSimulation])
+/**
+ * useSimulation — DISABLED for real rooms.
+ * 
+ * The simulation engine has been removed. This hook is kept as a no-op
+ * to avoid breaking any remaining imports, but it does nothing.
+ * 
+ * Real rooms use Supabase Realtime for presence and thought updates.
+ */
+export function useSimulation(_active: boolean) {
+  // No-op: simulation removed in favor of real Supabase Realtime
 }

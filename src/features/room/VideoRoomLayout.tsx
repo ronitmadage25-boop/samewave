@@ -1,388 +1,507 @@
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
-  Mic, MicOff, Video as VideoIcon, VideoOff, Hand, Sparkles,
-  MessageSquare, Palette, PhoneOff, LayoutGrid, Maximize2
+  Mic, MicOff, Video, VideoOff, Hand, PhoneOff,
+  Sparkles, MessageSquare, AlertTriangle, Loader2
 } from 'lucide-react'
 import { useAppStore } from '@/store/useAppStore'
-import type { Room, Participant } from '@/types'
+import { useWebRTC } from '@/hooks/useWebRTC'
+import type { Room } from '@/types'
 import { ThoughtsPanel } from './ThoughtsPanel'
-import { Whiteboard } from './Whiteboard'
 
-export function VideoRoomLayout({ room, onLeave }: { room: Room; onLeave: () => void }) {
-  const toggleMuteSelf = useAppStore((s) => s.toggleMuteSelf)
-  const toggleVideoSelf = useAppStore((s) => s.toggleVideoSelf)
+const PALETTE_COLORS = [
+  '#E8542A', '#4A7FA5', '#7C4AB5', '#2E7D5E', '#E5A93C', '#E24A8D'
+]
+
+interface VideoRoomLayoutProps {
+  room: Room
+  onLeave: () => void
+  onPresenceUpdate?: (updates: {
+    isMuted?: boolean
+    hasVideo?: boolean
+    handRaised?: boolean
+    presenceState?: string
+  }) => void
+}
+
+/** Local video tile — shows actual camera feed */
+function LocalVideoTile({ stream, isMuted, isCameraOn, name, initials, avatarUrl, isSpeaking, colorSeed }: {
+  stream: MediaStream | null
+  isMuted: boolean
+  isCameraOn: boolean
+  name: string
+  initials: string
+  avatarUrl?: string | null
+  isSpeaking: boolean
+  colorSeed: number
+}) {
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const color = PALETTE_COLORS[colorSeed % PALETTE_COLORS.length]
+
+  useEffect(() => {
+    if (videoRef.current && stream && isCameraOn) {
+      videoRef.current.srcObject = stream
+    } else if (videoRef.current) {
+      videoRef.current.srcObject = null
+    }
+  }, [stream, isCameraOn])
+
+  return (
+    <div className="relative rounded-2xl overflow-hidden aspect-video bg-[var(--color-surface-2)]"
+      style={{ border: isSpeaking ? `2px solid ${color}` : '2px solid var(--color-border)' }}>
+      {/* Camera feed */}
+      {isCameraOn && stream ? (
+        <video
+          ref={videoRef}
+          autoPlay
+          muted
+          playsInline
+          className="w-full h-full object-cover scale-x-[-1]"
+        />
+      ) : (
+        <div className="w-full h-full flex items-center justify-center">
+          {avatarUrl ? (
+            <img src={avatarUrl} alt={name} className="w-16 h-16 rounded-full object-cover opacity-70" />
+          ) : (
+            <div className="w-16 h-16 rounded-full flex items-center justify-center text-xl font-bold"
+              style={{ background: color, color: 'white', opacity: 0.8 }}>
+              {initials.slice(0, 2)}
+            </div>
+          )}
+          {!isCameraOn && (
+            <div className="absolute bottom-3 left-1/2 -translate-x-1/2 text-[10px] font-mono uppercase tracking-widest"
+              style={{ color: 'var(--color-muted)' }}>
+              Camera off
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Overlay controls */}
+      <div className="absolute top-2 right-2 flex items-center gap-1">
+        {isMuted && (
+          <div className="w-6 h-6 rounded-full flex items-center justify-center"
+            style={{ background: 'rgba(0,0,0,0.6)' }}>
+            <MicOff size={11} className="text-white/70" />
+          </div>
+        )}
+      </div>
+
+      {/* Name label */}
+      <div className="absolute bottom-2 left-2 flex items-center gap-1.5">
+        <span className="text-[11px] font-medium px-2 py-0.5 rounded-full"
+          style={{ background: 'rgba(0,0,0,0.6)', color: 'white' }}>
+          You
+        </span>
+        {isSpeaking && !isMuted && (
+          <div className="flex items-center gap-[2px]">
+            {[3, 5, 4, 6, 4].map((h, i) => (
+              <div key={i} className="animate-wave-bar rounded-full"
+                style={{
+                  width: 2,
+                  height: `${h}px`,
+                  background: color,
+                  '--duration': `${0.6 + i * 0.1}s`,
+                  '--delay': `${i * 0.08}s`,
+                } as React.CSSProperties} />
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/** Remote video tile — shows WebRTC stream from another participant */
+function RemoteVideoTile({ stream, name, initials, avatarUrl, isMuted, isSpeaking, colorSeed, handRaised }: {
+  stream: MediaStream | null
+  name: string
+  initials: string
+  avatarUrl?: string | null
+  isMuted?: boolean
+  isSpeaking: boolean
+  colorSeed: number
+  handRaised?: boolean
+}) {
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const color = PALETTE_COLORS[colorSeed % PALETTE_COLORS.length]
+  const hasVideoTrack = stream?.getVideoTracks().some(t => t.enabled && t.readyState === 'live')
+
+  useEffect(() => {
+    if (videoRef.current && stream) {
+      videoRef.current.srcObject = stream
+    }
+  }, [stream])
+
+  return (
+    <div className="relative rounded-2xl overflow-hidden aspect-video bg-[var(--color-surface-2)]"
+      style={{ border: isSpeaking ? `2px solid ${color}` : '2px solid var(--color-border)' }}>
+      {/* Video feed or avatar placeholder */}
+      {stream && hasVideoTrack ? (
+        <video
+          ref={videoRef}
+          autoPlay
+          playsInline
+          className="w-full h-full object-cover"
+        />
+      ) : (
+        <div className="w-full h-full flex flex-col items-center justify-center gap-3">
+          {avatarUrl ? (
+            <img src={avatarUrl} alt={name} className="w-16 h-16 rounded-full object-cover opacity-70" />
+          ) : (
+            <div className="w-16 h-16 rounded-full flex items-center justify-center text-xl font-bold"
+              style={{ background: color, color: 'white' }}>
+              {initials.slice(0, 2)}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Status overlays */}
+      <div className="absolute top-2 right-2 flex items-center gap-1">
+        {isMuted && (
+          <div className="w-6 h-6 rounded-full flex items-center justify-center"
+            style={{ background: 'rgba(0,0,0,0.6)' }}>
+            <MicOff size={11} className="text-white/70" />
+          </div>
+        )}
+        {handRaised && (
+          <span className="text-base">✋</span>
+        )}
+      </div>
+
+      {/* Name */}
+      <div className="absolute bottom-2 left-2 flex items-center gap-1.5">
+        <span className="text-[11px] font-medium px-2 py-0.5 rounded-full"
+          style={{ background: 'rgba(0,0,0,0.6)', color: 'white' }}>
+          {name}
+        </span>
+        {isSpeaking && !isMuted && (
+          <div className="flex items-center gap-[2px]">
+            {[3, 5, 4, 6, 4].map((h, i) => (
+              <div key={i} className="animate-wave-bar rounded-full"
+                style={{
+                  width: 2,
+                  height: `${h}px`,
+                  background: color,
+                  '--duration': `${0.6 + i * 0.1}s`,
+                  '--delay': `${i * 0.08}s`,
+                } as React.CSSProperties} />
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+export function VideoRoomLayout({ room, onLeave, onPresenceUpdate }: VideoRoomLayoutProps) {
   const raiseHandSelf = useAppStore((s) => s.raiseHandSelf)
   const setParticipantReactionEmoji = useAppStore((s) => s.setParticipantReactionEmoji)
+  const user = useAppStore((s) => s.user)
+  const profile = useAppStore((s) => s.profile)
 
-  const [activeSideTab, setActiveSideTab] = useState<'thoughts' | 'whiteboard' | 'none'>('none')
+  const [showThoughts, setShowThoughts] = useState(false)
   const [showReactions, setShowReactions] = useState(false)
-  const [layoutMode, setLayoutMode] = useState<'grid' | 'speaker'>('grid')
-  const [pinnedParticipantId, setPinnedParticipantId] = useState<string | null>(null)
 
   const self = room.participants.find((p) => p.isSelf)
-  const speakers = room.participants.filter((p) => p.presenceState === 'speaking')
-  const primarySpeaker = pinnedParticipantId
-    ? room.participants.find((p) => p.id === pinnedParticipantId)
-    : speakers[0] || room.participants[0]
+
+  // Real WebRTC audio + video
+  const {
+    localStream,
+    remoteStreams,
+    isMuted,
+    isCameraOn,
+    micPermission,
+    cameraPermission,
+    toggleMic,
+    toggleCamera,
+    isSpeaking,
+    cleanup,
+  } = useWebRTC({
+    roomId: room.id,
+    mode: 'video',
+    enabled: true,
+  })
+
+  // Sync state to presence
+  useEffect(() => {
+    onPresenceUpdate?.({ isMuted, hasVideo: isCameraOn })
+  }, [isMuted, isCameraOn])
+
+  // Sync speaking to store
+  useEffect(() => {
+    if (user) {
+      useAppStore.getState().setParticipantSpeaking(user.id, isSpeaking)
+    }
+  }, [isSpeaking, user?.id])
+
+  useEffect(() => {
+    return () => { cleanup() }
+  }, [cleanup])
+
+  function handleRaiseHand() {
+    raiseHandSelf()
+    onPresenceUpdate?.({ handRaised: !self?.handRaised })
+  }
 
   function handleQuickReact(emoji: string) {
     if (self) {
       setParticipantReactionEmoji(self.id, emoji)
       setShowReactions(false)
-      setTimeout(() => {
-        setParticipantReactionEmoji(self.id, undefined)
-      }, 3500)
+      setTimeout(() => { setParticipantReactionEmoji(self.id, undefined) }, 3500)
     }
   }
 
-  const PALETTE_COLORS = [
-    '#E8542A', '#4A7FA5', '#7C4AB5', '#2E7D5E', '#E5A93C', '#E24A8D'
-  ]
+  function handleLeave() {
+    cleanup()
+    onLeave()
+  }
+
+  const QUICK_REACTIONS = ['✨', '💡', '🔥', '👏', '🤔', '💯']
+  const remoteParticipants = room.participants.filter(p => !p.isSelf)
+
+  const permissionError = micPermission === 'denied' || cameraPermission === 'denied'
+  const permissionUnavailable = micPermission === 'unavailable' || cameraPermission === 'unavailable'
 
   return (
-    <div className="flex-1 flex overflow-hidden relative bg-[var(--color-bg)]">
-      {/* Main Video Presentation Area */}
-      <div className="flex-1 flex flex-col min-w-0 h-full">
-        {/* Video Mode Bar */}
-        <div className="px-6 py-2.5 border-b border-[var(--color-border)] flex items-center justify-between bg-[var(--color-surface)]/30">
-          <div className="flex items-center gap-3">
-            <span className="relative flex h-2.5 w-2.5">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[var(--color-video-room)] opacity-75" />
-              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-[var(--color-video-room)]" />
+    <div className="flex-1 flex overflow-hidden bg-[var(--color-bg)]">
+      {/* Main Video Grid */}
+      <div className="flex-1 flex flex-col min-w-0">
+        {/* Permission warning */}
+        {(permissionError || permissionUnavailable) && (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="flex items-center gap-3 px-6 py-3 border-b text-xs"
+            style={{ background: 'var(--color-signal-soft)', borderColor: 'var(--color-signal)', color: 'var(--color-signal)' }}
+          >
+            <AlertTriangle size={14} className="shrink-0" />
+            <span>
+              {micPermission === 'denied' || cameraPermission === 'denied'
+                ? 'Camera/microphone access denied. Allow permissions in browser settings.'
+                : 'No camera or microphone detected on this device.'}
             </span>
-            <span className="text-xs font-mono font-medium tracking-wide uppercase text-[var(--color-video-room)]">
-              Video Space • {room.participants.length} Active Minds
-            </span>
-          </div>
+          </motion.div>
+        )}
 
-          <div className="flex items-center gap-1 border border-[var(--color-border)] rounded-lg p-0.5 bg-[var(--color-surface)]">
-            <button
-              onClick={() => setLayoutMode('grid')}
-              className={`px-2.5 py-1 rounded text-xs flex items-center gap-1.5 transition-colors ${
-                layoutMode === 'grid'
-                  ? 'bg-[var(--color-surface-2)] text-[var(--color-fg)] font-semibold'
-                  : 'text-[var(--color-muted)] hover:text-[var(--color-fg)]'
-              }`}
-            >
-              <LayoutGrid size={13} />
-              Grid
-            </button>
-            <button
-              onClick={() => setLayoutMode('speaker')}
-              className={`px-2.5 py-1 rounded text-xs flex items-center gap-1.5 transition-colors ${
-                layoutMode === 'speaker'
-                  ? 'bg-[var(--color-surface-2)] text-[var(--color-fg)] font-semibold'
-                  : 'text-[var(--color-muted)] hover:text-[var(--color-fg)]'
-              }`}
-            >
-              <Maximize2 size={13} />
-              Spotlight
-            </button>
-          </div>
-        </div>
+        {/* Video tiles */}
+        <div className="flex-1 p-4 overflow-auto">
+          <div className={`h-full grid gap-3 ${
+            remoteParticipants.length === 0 ? 'grid-cols-1 max-w-2xl mx-auto' :
+            remoteParticipants.length === 1 ? 'grid-cols-1 md:grid-cols-2' :
+            remoteParticipants.length <= 3 ? 'grid-cols-2 md:grid-cols-2' :
+            'grid-cols-2 md:grid-cols-3'
+          } items-start content-start`}>
+            {/* Local (self) video tile */}
+            <LocalVideoTile
+              stream={localStream}
+              isMuted={isMuted}
+              isCameraOn={isCameraOn}
+              name={profile?.displayName ?? 'You'}
+              initials={profile?.initials ?? 'Y'}
+              avatarUrl={profile?.avatarUrl}
+              isSpeaking={isSpeaking}
+              colorSeed={user?.id.charCodeAt(0) ?? 0}
+            />
 
-        {/* Video Tiles Canvas */}
-        <div className="flex-1 overflow-y-auto p-4 md:p-6 flex items-center justify-center">
-          {layoutMode === 'speaker' && primarySpeaker ? (
-            /* Spotlight Mode: Large main video + side strip */
-            <div className="w-full h-full flex flex-col md:flex-row gap-4">
-              <div className="flex-1 h-full min-h-[300px]">
-                <VideoCard
-                  participant={primarySpeaker}
-                  isPrimary
-                  color={PALETTE_COLORS[primarySpeaker.colorSeed % PALETTE_COLORS.length]}
-                />
+            {/* Remote participant tiles */}
+            {remoteParticipants.map((p) => (
+              <RemoteVideoTile
+                key={p.id}
+                stream={remoteStreams.get(p.id) ?? null}
+                name={p.name}
+                initials={p.initials}
+                avatarUrl={p.avatarUrl}
+                isMuted={p.isMuted}
+                isSpeaking={p.presenceState === 'speaking'}
+                colorSeed={p.colorSeed}
+                handRaised={p.handRaised}
+              />
+            ))}
+
+            {/* Empty placeholder if only self */}
+            {remoteParticipants.length === 0 && (
+              <div className="aspect-video rounded-2xl border border-dashed flex flex-col items-center justify-center gap-3"
+                style={{ borderColor: 'var(--color-border)' }}>
+                <p className="text-xs font-mono uppercase tracking-widest"
+                  style={{ color: 'var(--color-muted)' }}>
+                  Waiting for others to join…
+                </p>
               </div>
-              <div className="flex md:flex-col gap-3 overflow-x-auto md:overflow-y-auto md:w-56 shrink-0">
-                {room.participants
-                  .filter((p) => p.id !== primarySpeaker.id)
-                  .map((p) => (
-                    <div
-                      key={p.id}
-                      onClick={() => setPinnedParticipantId(p.id)}
-                      className="cursor-pointer w-44 md:w-full h-28 shrink-0"
-                    >
-                      <VideoCard
-                        participant={p}
-                        color={PALETTE_COLORS[p.colorSeed % PALETTE_COLORS.length]}
-                      />
-                    </div>
-                  ))}
-              </div>
-            </div>
-          ) : (
-            /* Grid Mode: Dynamic grid layout */
-            <div
-              className={`w-full h-full max-w-6xl grid gap-4 p-2 place-content-center ${
-                room.participants.length <= 2
-                  ? 'grid-cols-1 md:grid-cols-2'
-                  : room.participants.length <= 4
-                  ? 'grid-cols-2'
-                  : 'grid-cols-2 md:grid-cols-3'
-              }`}
-            >
-              {room.participants.map((p) => (
-                <VideoCard
-                  key={p.id}
-                  participant={p}
-                  color={PALETTE_COLORS[p.colorSeed % PALETTE_COLORS.length]}
-                  onSelect={() => {
-                    setPinnedParticipantId(p.id)
-                    setLayoutMode('speaker')
-                  }}
-                />
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Bottom Video Control Dock */}
-        <div className="px-6 py-4 border-t border-[var(--color-border)] bg-[var(--color-surface)] flex items-center justify-between relative">
-          {/* Reaction picker popover */}
-          <AnimatePresence>
-            {showReactions && (
-              <motion.div
-                initial={{ opacity: 0, y: 15 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: 10 }}
-                className="absolute bottom-20 left-1/2 -translate-x-1/2 p-2 rounded-2xl bg-[var(--color-surface-2)] border border-[var(--color-border)] shadow-2xl flex items-center gap-2 z-30"
-              >
-                {['✨', '🌊', '💡', '🔥', '👏', '🎯'].map((emoji) => (
-                  <button
-                    key={emoji}
-                    onClick={() => handleQuickReact(emoji)}
-                    className="w-10 h-10 rounded-xl hover:scale-125 transition-transform flex items-center justify-center text-xl"
-                  >
-                    {emoji}
-                  </button>
-                ))}
-              </motion.div>
             )}
-          </AnimatePresence>
-
-          <div className="hidden sm:flex items-center gap-2 text-xs text-[var(--color-muted)]">
-            <VideoIcon size={14} className="text-[var(--color-video-room)]" />
-            <span>Encrypted Room</span>
           </div>
+        </div>
 
-          {/* Central Controls */}
-          <div className="flex items-center gap-3 mx-auto sm:mx-0">
-            {/* Mic Toggle */}
-            <button
-              onClick={toggleMuteSelf}
-              className={`p-3.5 rounded-full transition-all flex items-center gap-2 font-medium text-xs shadow-md ${
-                self?.isMuted
-                  ? 'bg-red-500/10 text-red-400 border border-red-500/30 hover:bg-red-500/20'
-                  : 'bg-[var(--color-surface-2)] text-[var(--color-fg)] border border-[var(--color-border)] hover:bg-[var(--color-surface)]'
-              }`}
-              title={self?.isMuted ? 'Unmute microphone' : 'Mute microphone'}
+        {/* Control Bar */}
+        <div className="border-t border-[var(--color-border)] bg-[var(--color-surface)]/80 px-6 py-4">
+          <div className="flex items-center justify-center gap-3 flex-wrap">
+            {/* Mic */}
+            <motion.button
+              whileTap={{ scale: 0.92 }}
+              onClick={toggleMic}
+              disabled={micPermission === 'denied' || micPermission === 'unavailable'}
+              className="flex flex-col items-center gap-1.5 disabled:opacity-40"
+              aria-label={isMuted ? 'Unmute' : 'Mute'}
             >
-              {self?.isMuted ? <MicOff size={18} /> : <Mic size={18} />}
-            </button>
+              <div className="w-12 h-12 rounded-full flex items-center justify-center transition-all"
+                style={{
+                  background: !isMuted ? 'var(--color-audio-room)' : 'var(--color-surface-2)',
+                  border: `2px solid ${!isMuted ? 'var(--color-audio-room)' : 'var(--color-border)'}`,
+                }}>
+                {micPermission === 'requesting' ? (
+                  <Loader2 size={18} className="animate-spin text-white" />
+                ) : isMuted ? (
+                  <MicOff size={18} className="text-[var(--color-muted)]" />
+                ) : (
+                  <Mic size={18} className="text-white" />
+                )}
+              </div>
+              <span className="text-[9px] font-mono uppercase tracking-widest"
+                style={{ color: 'var(--color-muted)' }}>
+                {isMuted ? 'Muted' : 'Live'}
+              </span>
+            </motion.button>
 
-            {/* Video Camera Toggle */}
-            <button
-              onClick={toggleVideoSelf}
-              className={`p-3.5 rounded-full transition-all flex items-center gap-2 font-medium text-xs shadow-md ${
-                self?.hasVideo === false
-                  ? 'bg-red-500/10 text-red-400 border border-red-500/30 hover:bg-red-500/20'
-                  : 'bg-[var(--color-signal)] text-white hover:opacity-90'
-              }`}
-              title={self?.hasVideo === false ? 'Turn video on' : 'Turn video off'}
+            {/* Camera */}
+            <motion.button
+              whileTap={{ scale: 0.92 }}
+              onClick={toggleCamera}
+              disabled={cameraPermission === 'denied' || cameraPermission === 'unavailable'}
+              className="flex flex-col items-center gap-1.5 disabled:opacity-40"
+              aria-label={isCameraOn ? 'Turn off camera' : 'Turn on camera'}
             >
-              {self?.hasVideo === false ? <VideoOff size={18} /> : <VideoIcon size={18} />}
-            </button>
+              <div className="w-12 h-12 rounded-full flex items-center justify-center transition-all"
+                style={{
+                  background: isCameraOn ? 'var(--color-video-room)' : 'var(--color-surface-2)',
+                  border: `2px solid ${isCameraOn ? 'var(--color-video-room)' : 'var(--color-border)'}`,
+                }}>
+                {cameraPermission === 'requesting' ? (
+                  <Loader2 size={18} className="animate-spin text-white" />
+                ) : isCameraOn ? (
+                  <Video size={18} className="text-white" />
+                ) : (
+                  <VideoOff size={18} className="text-[var(--color-muted)]" />
+                )}
+              </div>
+              <span className="text-[9px] font-mono uppercase tracking-widest"
+                style={{ color: 'var(--color-muted)' }}>
+                {isCameraOn ? 'Camera On' : 'Camera Off'}
+              </span>
+            </motion.button>
 
-            {/* Raise Hand Toggle */}
-            <button
-              onClick={raiseHandSelf}
-              className={`p-3.5 rounded-full transition-all flex items-center gap-2 font-medium text-xs border ${
-                self?.handRaised
-                  ? 'bg-amber-500 text-black border-amber-600 shadow-md font-bold'
-                  : 'bg-[var(--color-surface-2)] text-[var(--color-fg)] border-[var(--color-border)] hover:bg-[var(--color-surface)]'
-              }`}
-              title={self?.handRaised ? 'Lower hand' : 'Raise hand'}
+            {/* Raise Hand */}
+            <motion.button
+              whileTap={{ scale: 0.92 }}
+              onClick={handleRaiseHand}
+              className="flex flex-col items-center gap-1.5"
+              aria-label={self?.handRaised ? 'Lower hand' : 'Raise hand'}
             >
-              <Hand size={18} />
-            </button>
+              <div className="w-12 h-12 rounded-full flex items-center justify-center transition-all"
+                style={{
+                  background: self?.handRaised ? 'rgba(245, 158, 11, 0.2)' : 'var(--color-surface-2)',
+                  border: `2px solid ${self?.handRaised ? 'rgb(245, 158, 11)' : 'var(--color-border)'}`,
+                }}>
+                <Hand size={18} style={{ color: self?.handRaised ? 'rgb(245, 158, 11)' : 'var(--color-muted)' }} />
+              </div>
+              <span className="text-[9px] font-mono uppercase tracking-widest"
+                style={{ color: 'var(--color-muted)' }}>
+                {self?.handRaised ? 'Hand up' : 'Raise'}
+              </span>
+            </motion.button>
 
-            {/* Reactions button */}
-            <button
-              onClick={() => setShowReactions(!showReactions)}
-              className="p-3.5 rounded-full bg-[var(--color-surface-2)] text-[var(--color-fg)] border border-[var(--color-border)] hover:bg-[var(--color-surface)] transition-colors shadow-sm"
-              title="Send room reaction"
-            >
-              <Sparkles size={18} />
-            </button>
+            {/* Reactions */}
+            <div className="relative">
+              <motion.button
+                whileTap={{ scale: 0.92 }}
+                onClick={() => setShowReactions(!showReactions)}
+                className="flex flex-col items-center gap-1.5"
+                aria-label="Send reaction"
+              >
+                <div className="w-12 h-12 rounded-full flex items-center justify-center transition-all"
+                  style={{ background: 'var(--color-surface-2)', border: '2px solid var(--color-border)' }}>
+                  <Sparkles size={18} style={{ color: 'var(--color-muted)' }} />
+                </div>
+                <span className="text-[9px] font-mono uppercase tracking-widest"
+                  style={{ color: 'var(--color-muted)' }}>React</span>
+              </motion.button>
+              <AnimatePresence>
+                {showReactions && (
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.8, y: 8 }}
+                    animate={{ opacity: 1, scale: 1, y: 0 }}
+                    exit={{ opacity: 0, scale: 0.8, y: 8 }}
+                    className="absolute bottom-full mb-3 left-1/2 -translate-x-1/2 flex gap-2 p-2 rounded-2xl border shadow-xl"
+                    style={{ background: 'var(--color-surface-2)', borderColor: 'var(--color-border)' }}
+                  >
+                    {QUICK_REACTIONS.map((emoji) => (
+                      <motion.button
+                        key={emoji}
+                        whileHover={{ scale: 1.3 }}
+                        whileTap={{ scale: 0.9 }}
+                        onClick={() => handleQuickReact(emoji)}
+                        className="text-xl w-9 h-9 flex items-center justify-center rounded-xl hover:bg-white/10 transition-colors"
+                      >
+                        {emoji}
+                      </motion.button>
+                    ))}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
 
-            {/* Leave Room Button */}
-            <button
-              onClick={onLeave}
-              className="p-3.5 rounded-full bg-red-600/90 hover:bg-red-600 text-white shadow-md transition-colors"
-              title="Leave video room"
+            {/* Toggle thoughts */}
+            <motion.button
+              whileTap={{ scale: 0.92 }}
+              onClick={() => setShowThoughts(!showThoughts)}
+              className="flex flex-col items-center gap-1.5"
+              aria-label="Toggle thoughts panel"
             >
-              <PhoneOff size={18} />
-            </button>
-          </div>
+              <div className="w-12 h-12 rounded-full flex items-center justify-center transition-all"
+                style={{
+                  background: showThoughts ? 'var(--color-text-room-soft)' : 'var(--color-surface-2)',
+                  border: `2px solid ${showThoughts ? 'var(--color-text-room)' : 'var(--color-border)'}`,
+                }}>
+                <MessageSquare size={18}
+                  style={{ color: showThoughts ? 'var(--color-text-room)' : 'var(--color-muted)' }} />
+              </div>
+              <span className="text-[9px] font-mono uppercase tracking-widest"
+                style={{ color: 'var(--color-muted)' }}>Thoughts</span>
+            </motion.button>
 
-          {/* Right Drawers */}
-          <div className="flex items-center gap-1.5">
-            <button
-              onClick={() => setActiveSideTab(activeSideTab === 'thoughts' ? 'none' : 'thoughts')}
-              className={`p-2.5 rounded-lg border text-xs flex items-center gap-1.5 transition-colors ${
-                activeSideTab === 'thoughts'
-                  ? 'bg-[var(--color-surface-2)] border-[var(--color-signal)] text-[var(--color-signal)]'
-                  : 'border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-fg)]'
-              }`}
-              title="Toggle thoughts panel"
+            {/* Leave */}
+            <motion.button
+              whileTap={{ scale: 0.92 }}
+              onClick={handleLeave}
+              className="flex flex-col items-center gap-1.5"
+              aria-label="Leave room"
             >
-              <MessageSquare size={16} />
-              <span className="hidden lg:inline text-[11px] font-mono">Thoughts ({room.thoughts.length})</span>
-            </button>
-
-            <button
-              onClick={() => setActiveSideTab(activeSideTab === 'whiteboard' ? 'none' : 'whiteboard')}
-              className={`p-2.5 rounded-lg border text-xs flex items-center gap-1.5 transition-colors ${
-                activeSideTab === 'whiteboard'
-                  ? 'bg-[var(--color-surface-2)] border-[var(--color-signal)] text-[var(--color-signal)]'
-                  : 'border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-fg)]'
-              }`}
-              title="Toggle whiteboard"
-            >
-              <Palette size={16} />
-              <span className="hidden lg:inline text-[11px] font-mono">Canvas</span>
-            </button>
+              <div className="w-12 h-12 rounded-full flex items-center justify-center transition-all"
+                style={{ background: 'rgba(196, 57, 47, 0.15)', border: '2px solid rgba(196, 57, 47, 0.4)' }}>
+                <PhoneOff size={18} style={{ color: '#C4392F' }} />
+              </div>
+              <span className="text-[9px] font-mono uppercase tracking-widest"
+                style={{ color: 'var(--color-muted)' }}>Leave</span>
+            </motion.button>
           </div>
         </div>
       </div>
 
-      {/* Side Drawer for Thoughts or Whiteboard */}
+      {/* Side thoughts panel */}
       <AnimatePresence>
-        {activeSideTab !== 'none' && (
+        {showThoughts && (
           <motion.div
             initial={{ width: 0, opacity: 0 }}
-            animate={{ width: 420, opacity: 1 }}
+            animate={{ width: 360, opacity: 1 }}
             exit={{ width: 0, opacity: 0 }}
-            transition={{ duration: 0.25, ease: 'easeInOut' }}
-            className="border-l border-[var(--color-border)] h-full overflow-hidden flex flex-col bg-[var(--color-surface)] shadow-2xl z-20"
+            transition={{ type: 'spring', stiffness: 300, damping: 30 }}
+            className="hidden md:flex flex-col border-l border-[var(--color-border)] overflow-hidden"
+            style={{ background: 'var(--color-surface)' }}
           >
-            <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--color-border)]">
-              <span className="text-xs font-mono uppercase tracking-wider font-semibold text-[var(--color-fg)]">
-                {activeSideTab === 'thoughts' ? 'Thoughts & Questions' : 'Collaborative Canvas'}
-              </span>
-              <button
-                onClick={() => setActiveSideTab('none')}
-                className="text-xs text-[var(--color-muted)] hover:text-[var(--color-fg)]"
-              >
-                Close
-              </button>
-            </div>
-
-            <div className="flex-1 overflow-hidden relative">
-              {activeSideTab === 'thoughts' ? (
-                <ThoughtsPanel room={room} />
-              ) : (
-                <Whiteboard />
-              )}
-            </div>
+            <ThoughtsPanel room={room} />
           </motion.div>
         )}
       </AnimatePresence>
-    </div>
-  )
-}
-
-function VideoCard({
-  participant,
-  isPrimary,
-  color,
-  onSelect,
-}: {
-  participant: Participant
-  isPrimary?: boolean
-  color: string
-  onSelect?: () => void
-}) {
-  const isSpeaking = participant.presenceState === 'speaking'
-
-  return (
-    <div
-      onClick={onSelect}
-      className={`relative w-full h-full min-h-[140px] rounded-2xl overflow-hidden border transition-all duration-300 flex flex-col items-center justify-center bg-[var(--color-surface-2)] shadow-lg group ${
-        isSpeaking
-          ? 'ring-2 ring-emerald-400 border-emerald-400 shadow-emerald-500/10'
-          : 'border-[var(--color-border)] hover:border-[var(--color-muted)]'
-      }`}
-    >
-      {/* Background simulated camera stream with ambient wave gradient */}
-      <div
-        className="absolute inset-0 opacity-25"
-        style={{
-          background: `radial-gradient(circle at 50% 40%, ${color}44 0%, transparent 80%)`,
-        }}
-      />
-
-      {/* Center avatar or simulated video stream */}
-      <div className="relative z-10 flex flex-col items-center">
-        <div
-          className={`rounded-full flex items-center justify-center font-bold text-2xl shadow-inner transition-transform duration-300 ${
-            isPrimary ? 'w-28 h-28 text-3xl' : 'w-16 h-16 sm:w-20 sm:h-20 text-xl'
-          } ${isSpeaking ? 'scale-105 ring-4 ring-emerald-400/40' : ''}`}
-          style={{
-            backgroundColor: `${color}25`,
-            color: color,
-            border: `2px solid ${color}66`,
-          }}
-        >
-          {participant.initials}
-        </div>
-
-        {/* Transient emoji popover */}
-        <AnimatePresence>
-          {participant.reactionEmoji && (
-            <motion.div
-              initial={{ y: 5, opacity: 0, scale: 0.5 }}
-              animate={{ y: -35, opacity: 1, scale: 1.4 }}
-              exit={{ opacity: 0, y: -50 }}
-              className="absolute -top-4 text-3xl filter drop-shadow"
-            >
-              {participant.reactionEmoji}
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
-
-      {/* Top badges: Hand raised */}
-      {participant.handRaised && (
-        <div className="absolute top-3 left-3 z-20 flex items-center gap-1 px-2 py-1 rounded-full bg-amber-500 text-black text-xs font-bold shadow-md">
-          <Hand size={12} />
-          <span>Hand</span>
-        </div>
-      )}
-
-      {/* Bottom overlay: Name & Audio status */}
-      <div className="absolute bottom-3 left-3 right-3 z-20 flex items-center justify-between pointer-events-none">
-        <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-black/60 backdrop-blur-md text-white text-xs font-medium">
-          <span>{participant.name}</span>
-          {participant.isSelf && (
-            <span className="text-[9px] px-1 rounded bg-white/20 font-mono">YOU</span>
-          )}
-        </div>
-
-        <div className="p-1.5 rounded-lg bg-black/60 backdrop-blur-md text-white">
-          {participant.isMuted ? (
-            <MicOff size={13} className="text-red-400" />
-          ) : isSpeaking ? (
-            <div className="flex items-center gap-1 text-emerald-400 text-[11px] font-mono">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
-              <span>LIVE</span>
-            </div>
-          ) : (
-            <Mic size={13} className="text-white/70" />
-          )}
-        </div>
-      </div>
     </div>
   )
 }

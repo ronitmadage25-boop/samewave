@@ -1,12 +1,12 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useNavigate } from 'react-router-dom'
 import {
   MessageSquare, Mic, Video, Users, Clock, Search, X,
-  ArrowRight, Map, List, Filter
+  ArrowRight, Map, List, Filter, Plus, RefreshCw, AlertCircle, Radio
 } from 'lucide-react'
 import { useAppStore } from '@/store/useAppStore'
-import type { Category, Topic, RoomType } from '@/types'
+import type { Category, LiveRoom, RoomType } from '@/types'
 
 const CATEGORY_COLORS: Record<Category, string> = {
   Tech: 'var(--color-tech)',
@@ -33,10 +33,14 @@ const ROOM_TYPE_BG = {
   video: 'var(--color-video-room-soft)',
 }
 
-const ACTIVITY_PULSE_COLOR = {
-  quiet: 'var(--color-muted)',
-  active: 'var(--color-resonance)',
-  buzzing: 'var(--color-signal)',
+function timeAgo(isoDate: string): string {
+  const ms = Date.now() - new Date(isoDate).getTime()
+  const mins = Math.floor(ms / 60000)
+  if (mins < 1) return 'just now'
+  if (mins < 60) return `${mins}m ago`
+  const hrs = Math.floor(mins / 60)
+  if (hrs < 24) return `${hrs}h ago`
+  return `${Math.floor(hrs / 24)}d ago`
 }
 
 function WaveformMini({ active }: { active: boolean }) {
@@ -61,11 +65,12 @@ function WaveformMini({ active }: { active: boolean }) {
   )
 }
 
-function RoomListCard({ topic, onSelect }: { topic: Topic; onSelect: () => void }) {
-  const Icon = ROOM_TYPE_ICONS[topic.type]
-  const typeColor = ROOM_TYPE_COLORS[topic.type]
-  const typeBg = ROOM_TYPE_BG[topic.type]
-  const actColor = ACTIVITY_PULSE_COLOR[topic.activity]
+function RoomListCard({ room, onSelect }: { room: LiveRoom; onSelect: () => void }) {
+  const Icon = ROOM_TYPE_ICONS[room.type]
+  const typeColor = ROOM_TYPE_COLORS[room.type]
+  const typeBg = ROOM_TYPE_BG[room.type]
+  const catColor = CATEGORY_COLORS[room.category]
+  const isFull = room.member_count >= room.capacity
 
   return (
     <motion.button
@@ -87,45 +92,54 @@ function RoomListCard({ topic, onSelect }: { topic: Topic; onSelect: () => void 
         <div className="flex-1 min-w-0">
           <div className="flex items-center justify-between gap-2 mb-1">
             <h3 className="font-semibold text-sm truncate" style={{ color: 'var(--color-fg)' }}>
-              {topic.label}
+              {room.title}
             </h3>
-            <div className="flex items-center gap-1.5 shrink-0">
-              {topic.activity !== 'quiet' && (
-                <span className="relative flex h-1.5 w-1.5">
-                  {topic.activity === 'buzzing' && (
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75"
-                      style={{ background: actColor }} />
-                  )}
-                  <span className="relative inline-flex rounded-full h-1.5 w-1.5"
-                    style={{ background: actColor }} />
-                </span>
-              )}
-              {topic.type === 'audio' && (
-                <WaveformMini active={topic.activity === 'buzzing'} />
+            <div className="flex items-center gap-2 shrink-0">
+              {/* Live indicator */}
+              <span className="relative flex h-1.5 w-1.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75"
+                  style={{ background: isFull ? 'var(--color-muted)' : 'var(--color-signal)' }} />
+                <span className="relative inline-flex rounded-full h-1.5 w-1.5"
+                  style={{ background: isFull ? 'var(--color-muted)' : 'var(--color-signal)' }} />
+              </span>
+              {room.type === 'audio' && (
+                <WaveformMini active={true} />
               )}
             </div>
           </div>
-          <p className="text-xs line-clamp-1 mb-2" style={{ color: 'var(--color-muted)' }}>
-            "{topic.sampleThoughts[0]}"
-          </p>
-          <div className="flex items-center gap-3">
+
+          {room.description && (
+            <p className="text-xs line-clamp-1 mb-2" style={{ color: 'var(--color-muted)' }}>
+              {room.description}
+            </p>
+          )}
+
+          <div className="flex items-center gap-3 flex-wrap">
             <span className="flex items-center gap-1 text-[11px]" style={{ color: 'var(--color-muted)' }}>
-              <Users size={10} /> {topic.mindsCount}
+              <Users size={10} />
+              <span style={{ color: isFull ? 'var(--color-signal)' : 'inherit' }}>
+                {room.member_count}/{room.capacity}
+              </span>
             </span>
             <span className="flex items-center gap-1 text-[11px]" style={{ color: 'var(--color-muted)' }}>
-              <Clock size={10} /> ~{topic.minutesRemaining}m
+              <Clock size={10} /> {timeAgo(room.created_at)}
             </span>
             <span className="text-[10px] px-1.5 py-0.5 rounded-md"
               style={{
-                background: `${CATEGORY_COLORS[topic.category]}15`,
-                color: CATEGORY_COLORS[topic.category],
+                background: `${catColor}15`,
+                color: catColor,
               }}>
-              {topic.category}
+              {room.category}
             </span>
-            <span className="text-[10px] font-mono"
-              style={{ color: typeColor }}>
-              {topic.type}
+            <span className="text-[10px] font-mono" style={{ color: typeColor }}>
+              {room.type}
             </span>
+            {isFull && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded-md font-medium"
+                style={{ background: 'var(--color-signal-soft)', color: 'var(--color-signal)' }}>
+                Full
+              </span>
+            )}
           </div>
         </div>
 
@@ -136,10 +150,14 @@ function RoomListCard({ topic, onSelect }: { topic: Topic; onSelect: () => void 
   )
 }
 
-function MapNode({ topic, onClick }: { topic: Topic; onClick: () => void }) {
-  const Icon = ROOM_TYPE_ICONS[topic.type]
-  const typeColor = ROOM_TYPE_COLORS[topic.type]
-  const typeBg = ROOM_TYPE_BG[topic.type]
+function MapNode({ room, onClick }: { room: LiveRoom; onClick: () => void }) {
+  const Icon = ROOM_TYPE_ICONS[room.type]
+  const typeColor = ROOM_TYPE_COLORS[room.type]
+  const typeBg = ROOM_TYPE_BG[room.type]
+  // Position nodes pseudo-randomly based on room ID for visual variety
+  const hash = room.id.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0)
+  const x = 10 + (hash % 80)
+  const y = 10 + ((hash * 7) % 80)
 
   return (
     <motion.button
@@ -147,20 +165,17 @@ function MapNode({ topic, onClick }: { topic: Topic; onClick: () => void }) {
       animate={{ scale: 1 }}
       onClick={onClick}
       className="absolute flex flex-col items-center gap-1.5 -translate-x-1/2 -translate-y-1/2 group z-10"
-      style={{ left: `${topic.x * 100}%`, top: `${topic.y * 100}%` }}
+      style={{ left: `${x}%`, top: `${y}%` }}
     >
       <div
         className="w-12 h-12 rounded-full flex items-center justify-center border-2 transition-transform group-hover:scale-110 shadow-lg"
-        style={{
-          background: typeBg,
-          borderColor: typeColor,
-        }}
+        style={{ background: typeBg, borderColor: typeColor }}
       >
         <Icon size={18} style={{ color: typeColor }} strokeWidth={1.5} />
       </div>
       <span className="text-[11px] font-medium whitespace-nowrap px-2 py-0.5 rounded-md bg-surface/90 border border-border"
         style={{ color: 'var(--color-fg)' }}>
-        {topic.label}
+        {room.title}
       </span>
     </motion.button>
   )
@@ -168,45 +183,47 @@ function MapNode({ topic, onClick }: { topic: Topic; onClick: () => void }) {
 
 export default function RoomsPage() {
   const navigate = useNavigate()
-  const topics = useAppStore((s) => s.topics)
-  const enterRoom = useAppStore((s) => s.enterRoom)
+  const liveRooms = useAppStore((s) => s.liveRooms)
+  const liveRoomsLoading = useAppStore((s) => s.liveRoomsLoading)
+  const liveRoomsError = useAppStore((s) => s.liveRoomsError)
+  const fetchLiveRooms = useAppStore((s) => s.fetchLiveRooms)
   const user = useAppStore((s) => s.user)
   const openAuthModal = useAppStore((s) => s.openAuthModal)
 
   const [query, setQuery] = useState('')
   const [activeTypes, setActiveTypes] = useState<RoomType[]>([])
   const [activeCategories, setActiveCategories] = useState<Category[]>([])
-  const [sort, setSort] = useState<'live' | 'trending' | 'for-you' | 'ending-soon'>('live')
+  const [sort, setSort] = useState<'live' | 'trending' | 'ending-soon'>('live')
   const [view, setView] = useState<'list' | 'map'>('list')
-  const [selected, setSelected] = useState<Topic | null>(null)
+  const [selected, setSelected] = useState<LiveRoom | null>(null)
 
   const roomTypes: RoomType[] = ['text', 'audio', 'video']
   const categories: Category[] = ['Tech', 'Creative', 'Social', 'Lifestyle']
 
+  // Fetch real rooms on mount and on interval
+  useEffect(() => {
+    fetchLiveRooms()
+    const interval = setInterval(fetchLiveRooms, 30000) // Refresh every 30s
+    return () => clearInterval(interval)
+  }, [])
+
   const filtered = useMemo(() => {
-    let base = topics.filter((t) => {
+    let base = liveRooms.filter((r) => {
       const q = query.trim().toLowerCase()
-      const matchQ = q === '' || t.label.toLowerCase().includes(q)
-      const matchType = activeTypes.length === 0 || activeTypes.includes(t.type)
-      const matchCat = activeCategories.length === 0 || activeCategories.includes(t.category)
+      const matchQ = q === '' || r.title.toLowerCase().includes(q) || r.description?.toLowerCase().includes(q)
+      const matchType = activeTypes.length === 0 || activeTypes.includes(r.type)
+      const matchCat = activeCategories.length === 0 || activeCategories.includes(r.category)
       return matchQ && matchType && matchCat
     })
-    if (sort === 'trending') base = [...base].sort((a, b) => b.mindsCount - a.mindsCount)
-    else if (sort === 'ending-soon') base = [...base].sort((a, b) => a.minutesRemaining - b.minutesRemaining)
-    else if (sort === 'for-you') {
-      base = [...base].filter((t) => t.resonance !== undefined && t.resonance > 40)
-      if (base.length === 0) base = topics
-    }
+    if (sort === 'trending') base = [...base].sort((a, b) => b.member_count - a.member_count)
+    else if (sort === 'ending-soon') base = [...base].sort((a, b) =>
+      new Date(a.expires_at ?? '').getTime() - new Date(b.expires_at ?? '').getTime()
+    )
     return base
-  }, [topics, query, activeTypes, activeCategories, sort])
+  }, [liveRooms, query, activeTypes, activeCategories, sort])
 
-  function handleEnter(topicId: string) {
-    if (!user) {
-      openAuthModal('Sign in with Google to join this room.')
-      return
-    }
-    enterRoom(topicId)
-    navigate('/room')
+  function handleEnter(room: LiveRoom) {
+    navigate(`/room/${room.id}?type=${room.type}&title=${encodeURIComponent(room.title)}`)
   }
 
   function toggleType(t: RoomType) {
@@ -224,9 +241,20 @@ export default function RoomsPage() {
         style={{ background: 'rgba(10,10,15,0.9)', backdropFilter: 'blur(16px)', borderColor: 'var(--color-border)' }}>
         <div className="px-6 lg:px-8 py-4">
           <div className="flex items-center justify-between mb-4">
-            <h1 className="font-display text-xl font-semibold" style={{ color: 'var(--color-fg)' }}>
-              Live Rooms
-            </h1>
+            <div className="flex items-center gap-3">
+              <h1 className="font-display text-xl font-semibold" style={{ color: 'var(--color-fg)' }}>
+                Live Rooms
+              </h1>
+              {/* Live indicator */}
+              <span className="flex items-center gap-1.5 text-xs font-mono"
+                style={{ color: 'var(--color-signal)' }}>
+                <span className="relative flex h-1.5 w-1.5">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[var(--color-signal)] opacity-75" />
+                  <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-[var(--color-signal)]" />
+                </span>
+                {liveRoomsLoading ? '…' : `${liveRooms.length} active`}
+              </span>
+            </div>
             <div className="flex items-center gap-2">
               <button
                 onClick={() => setView('list')}
@@ -249,11 +277,26 @@ export default function RoomsPage() {
                 <Map size={15} />
               </button>
               <button
-                onClick={() => navigate('/create-room')}
+                onClick={() => fetchLiveRooms()}
+                className="w-8 h-8 flex items-center justify-center rounded-lg transition-all"
+                style={{ color: 'var(--color-muted)' }}
+                title="Refresh rooms"
+              >
+                <RefreshCw size={14} className={liveRoomsLoading ? 'animate-spin' : ''} />
+              </button>
+              <button
+                onClick={() => {
+                  if (!user) {
+                    openAuthModal('Sign in with Google to create a room.')
+                    return
+                  }
+                  navigate('/create-room')
+                }}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold"
                 style={{ background: 'var(--color-signal)', color: 'white' }}
               >
-                + Create
+                <Plus size={14} />
+                Create
               </button>
             </div>
           </div>
@@ -279,7 +322,6 @@ export default function RoomsPage() {
           {/* Filter row */}
           <div className="flex items-center gap-2 overflow-x-auto thin-scroll pb-1">
             <Filter size={13} style={{ color: 'var(--color-muted)' }} className="shrink-0" />
-            {/* Room type filters */}
             {roomTypes.map((t) => {
               const Icon = ROOM_TYPE_ICONS[t]
               const color = ROOM_TYPE_COLORS[t]
@@ -301,7 +343,6 @@ export default function RoomsPage() {
               )
             })}
             <div className="w-px h-4 shrink-0" style={{ background: 'var(--color-border)' }} />
-            {/* Category filters */}
             {categories.map((c) => {
               const active = activeCategories.includes(c)
               const color = CATEGORY_COLORS[c]
@@ -324,7 +365,7 @@ export default function RoomsPage() {
 
           {/* Sort tabs */}
           <div className="flex items-center gap-1 mt-3">
-            {(['live', 'trending', 'for-you', 'ending-soon'] as const).map((s) => (
+            {(['live', 'trending', 'ending-soon'] as const).map((s) => (
               <button
                 key={s}
                 onClick={() => setSort(s)}
@@ -334,7 +375,7 @@ export default function RoomsPage() {
                   color: sort === s ? 'var(--color-fg)' : 'var(--color-muted)',
                 }}
               >
-                {s === 'live' ? 'Live now' : s === 'for-you' ? 'For you' : s === 'ending-soon' ? 'Ending soon' : 'Trending'}
+                {s === 'live' ? 'Live now' : s === 'ending-soon' ? 'Ending soon' : 'Trending'}
               </button>
             ))}
           </div>
@@ -342,6 +383,24 @@ export default function RoomsPage() {
       </div>
 
       <div className="px-6 lg:px-8 py-6">
+        {/* Error state */}
+        {liveRoomsError && (
+          <div className="flex items-center gap-3 p-4 rounded-xl border mb-4"
+            style={{ background: 'var(--color-surface)', borderColor: 'var(--color-border)' }}>
+            <AlertCircle size={16} style={{ color: 'var(--color-signal)' }} />
+            <p className="text-sm" style={{ color: 'var(--color-muted)' }}>
+              We couldn't reach the wavelength right now. Check your connection.
+            </p>
+            <button
+              onClick={() => fetchLiveRooms()}
+              className="ml-auto text-xs font-medium"
+              style={{ color: 'var(--color-signal)' }}
+            >
+              Retry
+            </button>
+          </div>
+        )}
+
         <AnimatePresence mode="wait">
           {view === 'list' ? (
             <motion.div
@@ -351,16 +410,40 @@ export default function RoomsPage() {
               exit={{ opacity: 0 }}
               className="space-y-3"
             >
-              {filtered.length === 0 ? (
+              {/* Loading skeleton */}
+              {liveRoomsLoading && liveRooms.length === 0 ? (
                 <div className="text-center py-16">
-                  <p className="text-sm" style={{ color: 'var(--color-muted)' }}>No rooms match your filters.</p>
+                  <div className="flex items-center justify-center gap-2 text-sm"
+                    style={{ color: 'var(--color-muted)' }}>
+                    <Radio size={16} className="animate-pulse" />
+                    <span>Finding live wavelengths…</span>
+                  </div>
+                </div>
+              ) : filtered.length === 0 ? (
+                <div className="text-center py-16">
+                  <p className="text-sm mb-2" style={{ color: 'var(--color-fg)' }}>
+                    No active wavelengths yet.
+                  </p>
+                  <p className="text-xs mb-6" style={{ color: 'var(--color-muted)' }}>
+                    Be the first to start one.
+                  </p>
+                  <button
+                    onClick={() => {
+                      if (!user) { openAuthModal('Sign in to create a room.'); return }
+                      navigate('/create-room')
+                    }}
+                    className="px-4 py-2 rounded-lg text-sm font-semibold"
+                    style={{ background: 'var(--color-signal)', color: 'white' }}
+                  >
+                    Create a room
+                  </button>
                 </div>
               ) : (
-                filtered.map((topic) => (
+                filtered.map((room) => (
                   <RoomListCard
-                    key={topic.id}
-                    topic={topic}
-                    onSelect={() => setSelected(topic)}
+                    key={room.id}
+                    room={room}
+                    onSelect={() => setSelected(room)}
                   />
                 ))
               )}
@@ -378,13 +461,19 @@ export default function RoomsPage() {
                 borderColor: 'var(--color-border)',
               }}
             >
-              {filtered.map((topic) => (
-                <MapNode
-                  key={topic.id}
-                  topic={topic}
-                  onClick={() => setSelected(topic)}
-                />
-              ))}
+              {filtered.length === 0 ? (
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <p className="text-sm" style={{ color: 'var(--color-muted)' }}>No active rooms</p>
+                </div>
+              ) : (
+                filtered.map((room) => (
+                  <MapNode
+                    key={room.id}
+                    room={room}
+                    onClick={() => setSelected(room)}
+                  />
+                ))
+              )}
               {/* Legend */}
               <div className="absolute bottom-4 left-4 flex flex-wrap gap-3 px-3 py-2 rounded-xl border"
                 style={{ background: 'rgba(18,18,26,0.9)', borderColor: 'var(--color-border)' }}>
@@ -447,54 +536,63 @@ export default function RoomsPage() {
                   )
                 })()}
 
-                <h2 className="font-display text-2xl font-semibold mb-2"
+                <h2 className="font-display text-2xl font-semibold mb-1"
                   style={{ color: 'var(--color-fg)' }}>
-                  {selected.label}
+                  {selected.title}
                 </h2>
+
+                {selected.description && (
+                  <p className="text-sm mb-3" style={{ color: 'var(--color-muted)' }}>
+                    {selected.description}
+                  </p>
+                )}
 
                 <div className="flex items-center gap-5 mb-5">
                   <div>
                     <div className="font-data text-xl font-semibold" style={{ color: 'var(--color-fg)' }}>
-                      {selected.mindsCount}
+                      {selected.member_count}
                     </div>
                     <div className="text-[11px]" style={{ color: 'var(--color-muted)' }}>minds here</div>
                   </div>
-                  {selected.resonance !== undefined && (
-                    <div>
-                      <div className="font-data text-xl font-semibold" style={{ color: 'var(--color-resonance)' }}>
-                        {selected.resonance}%
-                      </div>
-                      <div className="text-[11px]" style={{ color: 'var(--color-muted)' }}>resonance</div>
-                    </div>
-                  )}
                   <div>
                     <div className="font-data text-xl font-semibold" style={{ color: 'var(--color-fg)' }}>
-                      ~{selected.minutesRemaining}m
+                      {selected.capacity}
                     </div>
-                    <div className="text-[11px]" style={{ color: 'var(--color-muted)' }}>remaining</div>
+                    <div className="text-[11px]" style={{ color: 'var(--color-muted)' }}>capacity</div>
+                  </div>
+                  <div>
+                    <div className="font-data text-xl font-semibold" style={{ color: 'var(--color-fg)' }}>
+                      {timeAgo(selected.created_at)}
+                    </div>
+                    <div className="text-[11px]" style={{ color: 'var(--color-muted)' }}>started</div>
                   </div>
                 </div>
 
-                <p className="text-xs font-mono uppercase tracking-widest mb-3"
-                  style={{ color: 'var(--color-muted)' }}>
-                  Live thoughts
-                </p>
-                <div className="space-y-2 mb-6">
-                  {selected.sampleThoughts.map((t, i) => (
-                    <p key={i} className="text-sm pl-3 py-1.5 border-l-2"
-                      style={{ borderColor: 'var(--color-border)', color: 'var(--color-fg)' }}>
-                      "{t}"
-                    </p>
-                  ))}
-                </div>
+                {/* Host info */}
+                {selected.host_name && (
+                  <div className="flex items-center gap-2 mb-5 text-xs" style={{ color: 'var(--color-muted)' }}>
+                    <div className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold"
+                      style={{ background: 'var(--color-surface-2)', color: 'var(--color-fg)' }}>
+                      {selected.host_initials?.slice(0, 2) ?? '?'}
+                    </div>
+                    <span>Started by <span style={{ color: 'var(--color-fg)' }}>{selected.host_name}</span></span>
+                  </div>
+                )}
 
                 <button
-                  onClick={() => handleEnter(selected.id)}
-                  className="w-full flex items-center justify-center gap-2 py-3.5 rounded-xl font-semibold transition-all"
+                  onClick={() => handleEnter(selected)}
+                  disabled={selected.member_count >= selected.capacity}
+                  className="w-full flex items-center justify-center gap-2 py-3.5 rounded-xl font-semibold transition-all disabled:opacity-50"
                   style={{ background: 'var(--color-signal)', color: 'white' }}
                 >
-                  Enter this moment
-                  <ArrowRight size={16} />
+                  {selected.member_count >= selected.capacity ? (
+                    'Wavelength is full'
+                  ) : (
+                    <>
+                      Enter this moment
+                      <ArrowRight size={16} />
+                    </>
+                  )}
                 </button>
               </div>
             </motion.div>

@@ -6,7 +6,6 @@ import {
   Users, Clock, Globe, Lock, Network, Palette,
   FileText, HelpCircle, Zap, Check
 } from 'lucide-react'
-import { useAppStore } from '@/store/useAppStore'
 import type { RoomType, Category, RoomTool } from '@/types'
 
 const ROOM_TYPES: { type: RoomType; label: string; icon: typeof MessageSquare; color: string; bg: string; desc: string; vibe: string }[] = [
@@ -56,9 +55,6 @@ const STEPS = ['Type', 'Identity', 'Parameters', 'Tools', 'Launch']
 
 export default function CreateRoomPage() {
   const navigate = useNavigate()
-  const user = useAppStore((s) => s.user)
-  const openAuthModal = useAppStore((s) => s.openAuthModal)
-  const createRoom = useAppStore((s) => s.createRoom)
 
   const [step, setStep] = useState(0)
   const [type, setType] = useState<RoomType | null>(null)
@@ -70,7 +66,6 @@ export default function CreateRoomPage() {
   const [visibility, setVisibility] = useState<'public' | 'invite'>('public')
   const [tools, setTools] = useState<RoomTool[]>(['reactions', 'thought-graph'])
   const [launching, setLaunching] = useState(false)
-  const [errorMsg, setErrorMsg] = useState<string | null>(null)
 
   function toggleTool(t: RoomTool) {
     setTools(prev => prev.includes(t) ? prev.filter(x => x !== t) : [...prev, t])
@@ -86,26 +81,22 @@ export default function CreateRoomPage() {
 
   function handleLaunch() {
     if (!type || !title.trim()) return
-
-    if (!user) {
-      openAuthModal('Sign in with Google to form a new social space.')
-      return
-    }
-
     setLaunching(true)
-    setErrorMsg(null)
 
-    createRoom({
-      title: title.trim(),
+    const roomId = (typeof crypto !== 'undefined' && crypto.randomUUID)
+      ? crypto.randomUUID()
+      : `room_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`
+
+    const params = new URLSearchParams({
       type,
+      title: title.trim(),
       category,
-      description,
-      capacity,
-      durationMinutes: duration,
-      visibility,
-      tools,
+      duration: String(duration),
     })
-    navigate('/room')
+
+    setTimeout(() => {
+      navigate(`/room/${roomId}?${params.toString()}`)
+    }, 450)
   }
 
   const canProceed = [
@@ -590,11 +581,6 @@ export default function CreateRoomPage() {
               transition={{ delay: 0.3 }}
               className="mt-8"
             >
-              {errorMsg && (
-                <div className="mb-4 p-3.5 rounded-xl bg-red-500/10 border border-red-500/25 text-red-400 text-xs">
-                  {errorMsg}
-                </div>
-              )}
               <div className="flex items-center gap-3">
                 {step < STEPS.length - 1 ? (
                   <button

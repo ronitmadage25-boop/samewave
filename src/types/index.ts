@@ -56,6 +56,9 @@ export interface PollOption {
 export interface Thought {
   id: string
   authorId: string
+  authorName?: string
+  authorInitials?: string
+  authorAvatar?: string | null
   type: ThoughtType
   text: string
   code?: string
@@ -83,6 +86,7 @@ export interface Participant {
   id: string
   name: string
   initials: string
+  avatarUrl?: string | null
   colorSeed: number
   isSelf?: boolean
   presenceState: PresenceState
@@ -91,6 +95,8 @@ export interface Participant {
   handRaised?: boolean
   reactionEmoji?: string
   lastActiveAt?: number
+  // WebRTC stream (client-side only, not persisted)
+  stream?: MediaStream
 }
 
 // ── Whiteboard ─────────────────────────────────────────────────────────────
@@ -132,9 +138,17 @@ export interface RoomMessage {
 }
 
 export interface Room {
+  // DB fields
+  id: string
   topicId: string
   topicLabel: string
   type: RoomType
+  category: Category
+  description?: string
+  capacity: number
+  visibility: 'public' | 'private' | 'invite'
+  tools: RoomTool[]
+  // Runtime state
   stage: RoomStage
   startedAt: number
   durationMinutes: number
@@ -143,10 +157,30 @@ export interface Room {
   connections: ThoughtConnection[]
   messages: RoomMessage[]
   whiteboard: WhiteboardStroke[]
-  capacity?: number
-  visibility?: 'public' | 'private' | 'invite'
-  tools?: RoomTool[]
-  description?: string
+  // From DB view
+  hostName?: string
+  hostId?: string
+  memberCount?: number
+}
+
+// ── Live Room (for discovery list) ─────────────────────────────────────────
+export interface LiveRoom {
+  id: string
+  title: string
+  type: RoomType
+  category: Category
+  description?: string | null
+  visibility: 'public' | 'private' | 'invite'
+  status: 'active' | 'ended' | 'cancelled'
+  capacity: number
+  duration_minutes: number
+  member_count: number
+  host_name?: string
+  host_avatar?: string | null
+  host_initials?: string
+  created_at: string
+  expires_at?: string | null
+  tools: string[]
 }
 
 // ── Daily Signals ──────────────────────────────────────────────────────────
@@ -158,6 +192,7 @@ export interface DailySignal {
   authorId: string
   authorName: string
   authorInitials: string
+  authorAvatar?: string | null
   colorSeed: number
   publishedAt: number
   reactions: Record<SignalReaction, number>
@@ -180,6 +215,7 @@ export type ActivityEventType =
   | 'reaction-received'
   | 'participant-joined'
   | 'participant-left'
+  | 'thought-posted'
 
 export interface ActivityEvent {
   id: string
@@ -222,4 +258,16 @@ export interface CreateRoomOptions {
   durationMinutes?: number
   visibility?: 'public' | 'invite'
   tools?: RoomTool[]
+}
+
+// ── Realtime Presence State ───────────────────────────────────────────────────
+export interface RoomPresencePayload {
+  userId: string
+  displayName: string
+  initials: string
+  avatarUrl: string | null
+  isMuted: boolean
+  hasVideo: boolean
+  handRaised: boolean
+  presenceState: PresenceState
 }

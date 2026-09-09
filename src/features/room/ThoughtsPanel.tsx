@@ -14,7 +14,6 @@ export function ThoughtsPanel({ room }: { room: Room }) {
   const reactToThought = useAppStore((s) => s.reactToThought)
   const connectThoughts = useAppStore((s) => s.connectThoughts)
   const markPriority = useAppStore((s) => s.markPriority)
-  const typingParticipantId = useAppStore((s) => s.typingParticipantId)
 
   // Composer state
   const [activeTab, setActiveTab] = useState<ThoughtType>('thought')
@@ -33,7 +32,7 @@ export function ThoughtsPanel({ room }: { room: Room }) {
   const [connectTarget, setConnectTarget] = useState<Thought | null>(null)
 
   const byId = (id: string) => room.participants.find((p) => p.id === id)
-  const typingParticipant = typingParticipantId ? byId(typingParticipantId) : null
+  const typingParticipant = room.participants.find((p) => !p.isSelf && p.presenceState === 'typing')
 
   function handleSend() {
     if (draft.trim().length < 2 && activeTab !== 'code') return

@@ -166,7 +166,6 @@ export default function HomePage() {
   const navigate = useNavigate()
   const topics = useAppStore((s) => s.topics)
   const wavelength = useAppStore((s) => s.wavelength)
-  const enterRoom = useAppStore((s) => s.enterRoom)
   const dailySignals = useAppStore((s) => s.dailySignals)
   const activityFeed = useAppStore((s) => s.activityFeed)
 
@@ -185,13 +184,12 @@ export default function HomePage() {
     return true
   })
 
-  function handleEnter(topicId: string) {
+  function handleEnter(_topicId: string) {
     if (!user) {
       openAuthModal('Sign in with Google to join this room.')
       return
     }
-    enterRoom(topicId)
-    navigate('/room')
+    navigate('/rooms')
   }
 
   function handleCreateClick() {
