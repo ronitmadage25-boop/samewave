@@ -2,8 +2,9 @@ import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useNavigate } from 'react-router-dom'
 import {
-  Bookmark, Radio, Zap, MessageSquare, Mic, Video,
-  Send, Check, User as UserIcon, LogOut, Edit3, ShieldCheck
+  Bookmark, MessageSquare, Mic, Video,
+  Check, User as UserIcon, LogOut, Edit3, ShieldCheck,
+  Zap, Send, PenLine
 } from 'lucide-react'
 import { useAppStore } from '@/store/useAppStore'
 import { useAuth } from '@/hooks/useAuth'
@@ -24,9 +25,7 @@ function formatDate(ts: number) {
 
 export default function IdentityPage() {
   const navigate = useNavigate()
-  const identityWavelengths = useAppStore((s) => s.identityWavelengths)
   const savedMoments = useAppStore((s) => s.savedMoments)
-  const wavelength = useAppStore((s) => s.wavelength)
   const myDailySignal = useAppStore((s) => s.myDailySignal)
   const publishDailySignal = useAppStore((s) => s.publishDailySignal)
 
@@ -39,16 +38,17 @@ export default function IdentityPage() {
   const [bioDraft, setBioDraft] = useState(bio)
   const MAX_SIGNAL = 120
 
-  function handlePublish() {
+  async function handlePublish() {
     if (!isAuthenticated) {
-      openAuthModal('Sign in with Google to publish a daily signal.')
+      openAuthModal('Sign in with Google to publish a daily thought.')
       return
     }
-
     if (signalDraft.trim().length < 4) return
-    publishDailySignal(signalDraft.trim())
-    setSignalPublished(true)
-    setSignalDraft('')
+    const { error } = await publishDailySignal(signalDraft.trim())
+    if (!error) {
+      setSignalPublished(true)
+      setSignalDraft('')
+    }
   }
 
   function handleSaveBio() {
@@ -58,99 +58,109 @@ export default function IdentityPage() {
     setIsEditingBio(false)
   }
 
-  const activeMoments = wavelength ? 1 : 0
-
   return (
-    <div className="min-h-screen pb-24 lg:pb-12 bg-[var(--color-bg)]">
+    <div className="min-h-screen pb-24 lg:pb-12" style={{ background: 'var(--color-bg)' }}>
       {/* Header */}
-      <header className="px-6 lg:px-10 py-6 border-b border-[var(--color-border)] flex items-center justify-between">
+      <header className="px-6 lg:px-10 py-5 border-b flex items-center justify-between"
+        style={{ borderColor: 'var(--color-border)' }}>
         <div>
-          <h1 className="font-display text-2xl md:text-3xl font-bold text-[var(--color-fg)]">
-            Your Wavelength Identity
+          <h1 className="font-display text-xl font-bold" style={{ color: 'var(--color-fg)' }}>
+            Identity
           </h1>
-          <p className="text-xs text-[var(--color-muted)] mt-0.5">
-            Identity on SameWave is about active resonance, not followers.
+          <p className="text-xs mt-0.5" style={{ color: 'var(--color-muted)' }}>
+            Your presence on SameWave
           </p>
         </div>
 
         {isAuthenticated ? (
           <button
             onClick={() => signOut()}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold text-[var(--color-muted)] hover:text-red-400 border border-[var(--color-border)] hover:border-red-400/30 transition-colors"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-colors"
+            style={{ borderColor: 'var(--color-border)', color: 'var(--color-muted)' }}
           >
             <LogOut size={13} />
             <span>Sign Out</span>
           </button>
         ) : (
           <button
-            onClick={() => openAuthModal('Sign in with Google to access your persistent profile.')}
-            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-[var(--color-signal)] text-white hover:opacity-90 transition-opacity shadow-md"
+            onClick={() => openAuthModal('Sign in with Google to access your profile.')}
+            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-semibold shadow-md"
+            style={{ background: 'var(--color-signal)', color: 'white' }}
           >
             <UserIcon size={14} />
-            <span>Sign In with Google</span>
+            <span>Sign In</span>
           </button>
         )}
       </header>
 
-      <div className="px-6 lg:px-10 py-8 max-w-5xl mx-auto space-y-8">
-        {/* Profile Identity Card */}
-        <div className="p-6 rounded-3xl bg-[var(--color-surface)] border border-[var(--color-border)] relative overflow-hidden shadow-sm">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+      <div className="px-6 lg:px-10 py-8 max-w-4xl mx-auto space-y-8">
+        {/* Profile Card */}
+        <div className="p-6 rounded-2xl border"
+          style={{ background: 'var(--color-surface)', borderColor: 'var(--color-border)' }}>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-5">
             <div className="flex items-center gap-4">
-              {/* Avatar circle */}
+              {/* Avatar */}
               {profile?.avatarUrl ? (
                 <img
                   src={profile.avatarUrl}
                   alt={profile.displayName || 'Profile'}
-                  className="w-16 h-16 rounded-full border-2 border-[var(--color-signal)] object-cover shadow-md"
+                  className="w-16 h-16 rounded-full object-cover"
+                  style={{ border: '2px solid var(--color-signal)' }}
                 />
               ) : (
-                <div className="w-16 h-16 rounded-full bg-[var(--color-signal)]/15 border-2 border-[var(--color-signal)] flex items-center justify-center text-[var(--color-signal)] font-display font-bold text-2xl shadow-md">
-                  {(profile?.initials || user?.email || 'Guest').slice(0, 2).toUpperCase()}
+                <div className="w-16 h-16 rounded-full flex items-center justify-center text-2xl font-bold text-white"
+                  style={{ background: 'var(--color-signal)' }}>
+                  {(profile?.initials || 'G').slice(0, 2).toUpperCase()}
                 </div>
               )}
 
               <div>
-                <div className="flex items-center gap-2">
-                  <h2 className="font-display text-xl font-bold text-[var(--color-fg)]">
+                <div className="flex items-center gap-2 mb-1">
+                  <h2 className="font-display text-xl font-bold" style={{ color: 'var(--color-fg)' }}>
                     {profile?.displayName || (isAuthenticated ? user?.email?.split('@')[0] : 'Guest Explorer')}
                   </h2>
                   {isAuthenticated ? (
-                    <span className="flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
-                      <ShieldCheck size={11} />
-                      <span>Verified</span>
+                    <span className="flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-full"
+                      style={{ background: 'rgba(52,211,153,0.1)', color: '#34D399', border: '1px solid rgba(52,211,153,0.3)' }}>
+                      <ShieldCheck size={10} />
+                      Verified
                     </span>
                   ) : (
-                    <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-[var(--color-surface-2)] text-[var(--color-muted)]">
-                      Guest Session
+                    <span className="text-[10px] font-mono px-2 py-0.5 rounded-full"
+                      style={{ background: 'var(--color-surface-2)', color: 'var(--color-muted)' }}>
+                      Guest
                     </span>
                   )}
                 </div>
 
-                <p className="text-xs font-mono text-[var(--color-muted)] mt-0.5">
-                  @{user?.email?.split('@')[0] || (isAuthenticated ? 'authenticated_user' : 'guest_wavelength')}
-                </p>
+                {user?.email && (
+                  <p className="text-xs font-mono mb-2" style={{ color: 'var(--color-muted)' }}>
+                    {user.email}
+                  </p>
+                )}
 
                 {/* Bio */}
-                <div className="mt-2 text-xs text-[var(--color-muted)]">
+                <div className="text-xs" style={{ color: 'var(--color-muted)' }}>
                   {isEditingBio ? (
-                    <div className="flex items-center gap-2 mt-1">
+                    <div className="flex items-center gap-2">
                       <input
                         value={bioDraft}
                         onChange={(e) => setBioDraft(e.target.value)}
                         placeholder="Write a brief bio..."
-                        className="bg-[var(--color-bg)] border border-[var(--color-border)] rounded-lg px-2.5 py-1 text-xs text-[var(--color-fg)] outline-none"
+                        className="rounded-lg px-2.5 py-1 text-xs outline-none"
+                        style={{
+                          background: 'var(--color-bg)',
+                          border: '1px solid var(--color-border)',
+                          color: 'var(--color-fg)',
+                        }}
                       />
-                      <button
-                        onClick={handleSaveBio}
-                        className="px-2.5 py-1 rounded-lg bg-[var(--color-signal)] text-white text-[11px] font-semibold"
-                      >
+                      <button onClick={handleSaveBio}
+                        className="px-2.5 py-1 rounded-lg text-white text-[11px] font-semibold"
+                        style={{ background: 'var(--color-signal)' }}>
                         Save
                       </button>
-                      <button
-                        onClick={() => setIsEditingBio(false)}
-                        className="text-[11px] text-[var(--color-muted)]"
-                      >
+                      <button onClick={() => setIsEditingBio(false)}
+                        className="text-[11px]" style={{ color: 'var(--color-muted)' }}>
                         Cancel
                       </button>
                     </div>
@@ -158,13 +168,8 @@ export default function IdentityPage() {
                     <div className="flex items-center gap-2">
                       <p>{bio}</p>
                       {isAuthenticated && (
-                        <button
-                          onClick={() => {
-                            setBioDraft(bio)
-                            setIsEditingBio(true)
-                          }}
-                          className="text-[var(--color-muted)] hover:text-[var(--color-fg)]"
-                        >
+                        <button onClick={() => { setBioDraft(bio); setIsEditingBio(true) }}
+                          style={{ color: 'var(--color-muted)' }}>
                           <Edit3 size={12} />
                         </button>
                       )}
@@ -174,18 +179,20 @@ export default function IdentityPage() {
               </div>
             </div>
 
-            {/* Guest Action Prompt */}
+            {/* Sign in prompt */}
             {!isAuthenticated && (
-              <div className="p-4 rounded-2xl bg-[var(--color-signal-soft)] border border-[var(--color-signal)]/30 text-xs space-y-2 max-w-sm">
-                <p className="font-semibold text-[var(--color-signal)]">
-                  Save your identity across devices
+              <div className="p-4 rounded-xl border max-w-xs"
+                style={{ background: 'var(--color-signal-soft)', borderColor: 'var(--color-signal)30' }}>
+                <p className="text-xs font-semibold mb-1" style={{ color: 'var(--color-signal)' }}>
+                  Save your identity
                 </p>
-                <p className="text-[var(--color-muted)] leading-relaxed text-[11px]">
-                  Sign in with Google to create your persistent wavelength profile, host rooms, and collect moments.
+                <p className="text-[11px] mb-3" style={{ color: 'var(--color-muted)' }}>
+                  Sign in with Google to create your persistent profile and host rooms.
                 </p>
                 <button
-                  onClick={() => openAuthModal('Sign in with Google to sync your wavelength profile.')}
-                  className="px-3.5 py-1.5 rounded-xl bg-[var(--color-signal)] text-white font-semibold text-xs hover:opacity-90 transition-opacity shadow-sm"
+                  onClick={() => openAuthModal('Sign in with Google to sync your profile.')}
+                  className="px-3.5 py-1.5 rounded-xl text-white text-xs font-semibold"
+                  style={{ background: 'var(--color-signal)' }}
                 >
                   Sign In with Google
                 </button>
@@ -194,101 +201,90 @@ export default function IdentityPage() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          {/* Left: wavelength + signal + stats */}
-          <div className="lg:col-span-1 space-y-6">
-            {/* Stats */}
-            <div className="grid grid-cols-2 gap-4">
-              <div className="p-4 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)]">
-                <div className="font-display text-3xl font-bold text-[var(--color-fg)] mb-1">
-                  {activeMoments}
-                </div>
-                <div className="text-[11px] font-mono uppercase tracking-wide text-[var(--color-muted)]">
-                  active moments
-                </div>
-              </div>
-              <div className="p-4 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)]">
-                <div className="font-display text-3xl font-bold text-[var(--color-signal)] mb-1">
-                  {savedMoments.length}
-                </div>
-                <div className="text-[11px] font-mono uppercase tracking-wide text-[var(--color-muted)]">
-                  saved moments
-                </div>
-              </div>
-            </div>
-
-            {/* Wavelength */}
-            <div className="p-5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)]">
-              <p className="text-xs font-mono uppercase tracking-widest text-[var(--color-muted)] mb-3">
-                Your wavelength
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Left sidebar */}
+          <div className="space-y-5">
+            {/* Quick actions */}
+            <div className="p-5 rounded-2xl border"
+              style={{ background: 'var(--color-surface)', borderColor: 'var(--color-border)' }}>
+              <p className="text-xs font-mono uppercase tracking-widest mb-4"
+                style={{ color: 'var(--color-muted)' }}>
+                Quick actions
               </p>
-              <div className="flex flex-wrap gap-2 mb-4">
-                {identityWavelengths.map((w) => (
-                  <span
-                    key={w}
-                    className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-[var(--color-resonance-soft)] text-[var(--color-resonance)] border border-[var(--color-resonance)]/30"
-                  >
-                    {w}
-                  </span>
-                ))}
+              <div className="space-y-2">
+                <button onClick={() => navigate('/create-room')}
+                  className="w-full flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl text-sm font-medium transition-all"
+                  style={{ background: 'var(--color-surface-2)', color: 'var(--color-fg)' }}>
+                  <Zap size={14} style={{ color: 'var(--color-signal)' }} />
+                  Create a room
+                </button>
+                <button onClick={() => navigate('/current')}
+                  className="w-full flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl text-sm font-medium transition-all"
+                  style={{ background: 'var(--color-surface-2)', color: 'var(--color-fg)' }}>
+                  <PenLine size={14} style={{ color: 'var(--color-signal)' }} />
+                  Post today's thought
+                </button>
+                <button onClick={() => navigate('/rooms')}
+                  className="w-full flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl text-sm font-medium transition-all"
+                  style={{ background: 'var(--color-surface-2)', color: 'var(--color-fg)' }}>
+                  <Mic size={14} style={{ color: 'var(--color-audio-room)' }} />
+                  Browse live rooms
+                </button>
               </div>
-              <button
-                onClick={() => navigate('/intent')}
-                className="flex items-center gap-1.5 text-xs text-[var(--color-signal)] hover:underline font-medium"
-              >
-                <Radio size={12} />
-                <span>Broadcast new intent →</span>
-              </button>
             </div>
 
-            {/* Daily Signal */}
-            <div className="p-5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)]">
+            {/* Daily Signal composer */}
+            <div className="p-5 rounded-2xl border"
+              style={{ background: 'var(--color-surface)', borderColor: 'var(--color-border)' }}>
               <div className="flex items-center gap-2 mb-3">
-                <Zap size={14} className="text-[var(--color-signal)]" />
-                <p className="text-xs font-mono uppercase tracking-widest text-[var(--color-muted)]">
-                  Daily Signal
+                <Zap size={14} style={{ color: 'var(--color-signal)' }} />
+                <p className="text-xs font-mono uppercase tracking-widest" style={{ color: 'var(--color-muted)' }}>
+                  Daily Thought
                 </p>
+                <span className="text-[10px] px-1.5 py-0.5 rounded font-mono"
+                  style={{ background: 'var(--color-signal-soft)', color: 'var(--color-signal)' }}>
+                  Once/day
+                </span>
               </div>
 
               <AnimatePresence mode="wait">
                 {myDailySignal || signalPublished ? (
-                  <motion.div
-                    key="published"
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    className="space-y-2"
-                  >
-                    <div className="flex items-center gap-2 text-xs font-medium text-emerald-400">
-                      <Check size={14} />
-                      <span>Today's signal broadcasted</span>
+                  <motion.div key="published" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+                    <div className="flex items-center gap-2 text-xs font-medium mb-2"
+                      style={{ color: '#34D399' }}>
+                      <Check size={13} />
+                      Today's thought sent
                     </div>
-                    <p className="text-xs italic text-[var(--color-fg)]">
-                      "{myDailySignal?.text || signalDraft}"
+                    <p className="text-xs italic" style={{ color: 'var(--color-fg)' }}>
+                      "{myDailySignal?.text}"
                     </p>
                   </motion.div>
                 ) : (
                   <motion.div key="composer" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-                    <p className="text-xs text-[var(--color-muted)] mb-2">
-                      One thought for today.
-                    </p>
                     <textarea
                       value={signalDraft}
                       onChange={(e) => setSignalDraft(e.target.value.slice(0, MAX_SIGNAL))}
-                      placeholder="What is occupying your mind today?"
+                      placeholder="One thought for today…"
                       rows={2}
-                      className="w-full bg-[var(--color-bg)] text-xs text-[var(--color-fg)] placeholder-[var(--color-muted)] outline-none border border-[var(--color-border)] rounded-xl p-2.5 resize-none mb-2"
+                      className="w-full text-xs outline-none rounded-xl px-3 py-2.5 resize-none mb-2 placeholder:opacity-30"
+                      style={{
+                        background: 'var(--color-bg)',
+                        border: '1px solid var(--color-border)',
+                        color: 'var(--color-fg)',
+                      }}
                     />
                     <div className="flex items-center justify-between">
-                      <span className="text-[10px] font-mono text-[var(--color-muted)]">
+                      <span className="text-[10px] font-mono" style={{ color: 'var(--color-muted)' }}>
                         {signalDraft.length}/{MAX_SIGNAL}
                       </span>
                       <button
                         onClick={handlePublish}
                         disabled={signalDraft.trim().length < 4}
-                        className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold bg-[var(--color-signal)] text-white disabled:opacity-40"
+                        className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold text-white disabled:opacity-40"
+                        style={{ background: 'var(--color-signal)' }}
                       >
                         <Send size={11} />
-                        <span>Publish</span>
+                        Publish
                       </button>
                     </div>
                   </motion.div>
@@ -300,22 +296,26 @@ export default function IdentityPage() {
           {/* Right: Saved moments */}
           <div className="lg:col-span-2">
             <div className="flex items-center gap-2 mb-4">
-              <Bookmark size={16} className="text-[var(--color-signal)]" />
-              <h3 className="font-display text-base font-bold text-[var(--color-fg)]">
+              <Bookmark size={16} style={{ color: 'var(--color-signal)' }} />
+              <h3 className="font-display text-base font-bold" style={{ color: 'var(--color-fg)' }}>
                 Saved Moments
               </h3>
             </div>
 
             {savedMoments.length === 0 ? (
-              <div className="p-8 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] text-center space-y-2">
-                <Bookmark size={28} className="mx-auto text-[var(--color-muted)] opacity-50" />
-                <p className="font-semibold text-sm text-[var(--color-fg)]">No moments preserved yet</p>
-                <p className="text-xs text-[var(--color-muted)] max-w-sm mx-auto">
-                  When you participate in a room and wrap up, you can anchor the shared constellation into your identity.
+              <div className="p-8 rounded-2xl border text-center space-y-2"
+                style={{ background: 'var(--color-surface)', borderColor: 'var(--color-border)' }}>
+                <Bookmark size={28} className="mx-auto opacity-30" style={{ color: 'var(--color-muted)' }} />
+                <p className="font-semibold text-sm" style={{ color: 'var(--color-fg)' }}>
+                  No moments saved yet
+                </p>
+                <p className="text-xs" style={{ color: 'var(--color-muted)' }}>
+                  When you participate in a room and save a moment, it appears here.
                 </p>
                 <button
                   onClick={() => navigate('/rooms')}
-                  className="mt-3 px-4 py-2 rounded-xl text-xs font-semibold bg-[var(--color-surface-2)] border border-[var(--color-border)] hover:border-[var(--color-signal)] text-[var(--color-fg)] transition-colors"
+                  className="mt-3 px-4 py-2 rounded-xl text-xs font-semibold border"
+                  style={{ borderColor: 'var(--color-border)', color: 'var(--color-fg)' }}
                 >
                   Explore Live Rooms
                 </button>
@@ -325,65 +325,41 @@ export default function IdentityPage() {
                 {savedMoments.map((moment) => {
                   const Icon = ROOM_TYPE_ICONS[moment.roomType]
                   const typeColor = ROOM_TYPE_COLORS[moment.roomType]
-
                   return (
-                    <div
-                      key={moment.id}
-                      className="p-5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] space-y-3 shadow-xs"
-                    >
+                    <div key={moment.id} className="p-5 rounded-2xl border space-y-3"
+                      style={{ background: 'var(--color-surface)', borderColor: 'var(--color-border)' }}>
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
-                          <span
-                            className="p-1.5 rounded-lg text-white"
-                            style={{ backgroundColor: typeColor }}
-                          >
+                          <span className="p-1.5 rounded-lg text-white" style={{ backgroundColor: typeColor }}>
                             <Icon size={12} />
                           </span>
-                          <h4 className="font-bold text-sm text-[var(--color-fg)]">
+                          <h4 className="font-bold text-sm" style={{ color: 'var(--color-fg)' }}>
                             {moment.topicLabel}
                           </h4>
                         </div>
-                        <span className="text-[10px] font-mono text-[var(--color-muted)]">
+                        <span className="text-[10px] font-mono" style={{ color: 'var(--color-muted)' }}>
                           {formatDate(moment.savedAt)}
                         </span>
                       </div>
-
-                      <div className="grid grid-cols-4 gap-2 text-center p-2 rounded-xl bg-[var(--color-bg)]">
-                        <div>
-                          <div className="font-display font-bold text-sm text-[var(--color-fg)]">
-                            {moment.mindsGathered}
+                      <div className="grid grid-cols-4 gap-2 text-center p-2 rounded-xl"
+                        style={{ background: 'var(--color-bg)' }}>
+                        {[
+                          { value: moment.mindsGathered, label: 'Minds' },
+                          { value: moment.thoughtsShared, label: 'Thoughts' },
+                          { value: moment.connectionsFormed, label: 'Links' },
+                          { value: moment.perspectivesEmerged, label: 'Perspectives', color: 'var(--color-resonance)' },
+                        ].map((stat) => (
+                          <div key={stat.label}>
+                            <div className="font-display font-bold text-sm"
+                              style={{ color: stat.color || 'var(--color-fg)' }}>
+                              {stat.value}
+                            </div>
+                            <div className="text-[9px] font-mono uppercase" style={{ color: 'var(--color-muted)' }}>
+                              {stat.label}
+                            </div>
                           </div>
-                          <div className="text-[9px] font-mono uppercase text-[var(--color-muted)]">Minds</div>
-                        </div>
-                        <div>
-                          <div className="font-display font-bold text-sm text-[var(--color-fg)]">
-                            {moment.thoughtsShared}
-                          </div>
-                          <div className="text-[9px] font-mono uppercase text-[var(--color-muted)]">Thoughts</div>
-                        </div>
-                        <div>
-                          <div className="font-display font-bold text-sm text-[var(--color-fg)]">
-                            {moment.connectionsFormed}
-                          </div>
-                          <div className="text-[9px] font-mono uppercase text-[var(--color-muted)]">Links</div>
-                        </div>
-                        <div>
-                          <div className="font-display font-bold text-sm text-[var(--color-resonance)]">
-                            {moment.perspectivesEmerged}
-                          </div>
-                          <div className="text-[9px] font-mono uppercase text-[var(--color-muted)]">Perspectives</div>
-                        </div>
+                        ))}
                       </div>
-
-                      {moment.highlightThoughts.length > 0 && (
-                        <div className="space-y-1">
-                          {moment.highlightThoughts.slice(0, 2).map((thought, i) => (
-                            <p key={i} className="text-xs text-[var(--color-muted)] italic line-clamp-1">
-                              "{thought}"
-                            </p>
-                          ))}
-                        </div>
-                      )}
                     </div>
                   )
                 })}

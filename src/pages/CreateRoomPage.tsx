@@ -4,9 +4,11 @@ import { useNavigate } from 'react-router-dom'
 import {
   MessageSquare, Mic, Video, ArrowRight, ArrowLeft,
   Users, Clock, Globe, Lock, Network, Palette,
-  FileText, HelpCircle, Zap, Check
+  FileText, HelpCircle, Zap, Check, AlertCircle
 } from 'lucide-react'
 import type { RoomType, Category, RoomTool } from '@/types'
+import { createRoomInDB } from '@/services/rooms'
+import { useAppStore } from '@/store/useAppStore'
 
 const ROOM_TYPES: { type: RoomType; label: string; icon: typeof MessageSquare; color: string; bg: string; desc: string; vibe: string }[] = [
   {
@@ -55,6 +57,8 @@ const STEPS = ['Type', 'Identity', 'Parameters', 'Tools', 'Launch']
 
 export default function CreateRoomPage() {
   const navigate = useNavigate()
+  const user = useAppStore((s) => s.user)
+  const openAuthModal = useAppStore((s) => s.openAuthModal)
 
   const [step, setStep] = useState(0)
   const [type, setType] = useState<RoomType | null>(null)
@@ -66,6 +70,7 @@ export default function CreateRoomPage() {
   const [visibility, setVisibility] = useState<'public' | 'invite'>('public')
   const [tools, setTools] = useState<RoomTool[]>(['reactions', 'thought-graph'])
   const [launching, setLaunching] = useState(false)
+  const [launchError, setLaunchError] = useState<string | null>(null)
 
   function toggleTool(t: RoomTool) {
     setTools(prev => prev.includes(t) ? prev.filter(x => x !== t) : [...prev, t])
@@ -79,24 +84,45 @@ export default function CreateRoomPage() {
     if (step > 0) setStep(s => s - 1)
   }
 
-  function handleLaunch() {
+  async function handleLaunch() {
     if (!type || !title.trim()) return
+
+    if (!user) {
+      openAuthModal('Sign in with Google to create a room.')
+      return
+    }
+
     setLaunching(true)
+    setLaunchError(null)
 
-    const roomId = (typeof crypto !== 'undefined' && crypto.randomUUID)
-      ? crypto.randomUUID()
-      : `room_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`
+    // Save persistent room to Supabase DB
+    const { data: room, error } = await createRoomInDB(
+      {
+        title: title.trim(),
+        type,
+        category,
+        description: description.trim() || undefined,
+        capacity,
+        durationMinutes: duration,
+        visibility,
+      },
+      user.id
+    )
 
+    if (error || !room) {
+      setLaunchError(error || 'Failed to create room. Please try again.')
+      setLaunching(false)
+      return
+    }
+
+    // Navigate to the real room with its DB UUID
     const params = new URLSearchParams({
       type,
       title: title.trim(),
       category,
       duration: String(duration),
     })
-
-    setTimeout(() => {
-      navigate(`/room/${roomId}?${params.toString()}`)
-    }, 450)
+    navigate(`/room/${room.id}?${params.toString()}`)
   }
 
   const canProceed = [
@@ -595,7 +621,8 @@ export default function CreateRoomPage() {
                 ) : (
                   <button
                     onClick={handleLaunch}
-                    className="flex items-center gap-2 px-8 py-4 rounded-xl font-semibold transition-all shadow-lg"
+                    disabled={launching}
+                    className="flex items-center gap-2 px-8 py-4 rounded-xl font-semibold transition-all shadow-lg disabled:opacity-60"
                     style={{ background: 'var(--color-signal)', color: 'white' }}
                   >
                     <Check size={18} />
@@ -606,8 +633,16 @@ export default function CreateRoomPage() {
                   Step {step + 1} of {STEPS.length} · {STEPS[step]}
                 </span>
               </div>
+              {launchError && (
+                <div className="mt-3 flex items-center gap-2 p-3 rounded-xl border"
+                  style={{ background: 'var(--color-surface)', borderColor: 'var(--color-border)' }}>
+                  <AlertCircle size={14} style={{ color: '#EF4444' }} />
+                  <p className="text-xs" style={{ color: '#EF4444' }}>{launchError}</p>
+                </div>
+              )}
             </motion.div>
           )}
+
         </div>
       </div>
     </div>

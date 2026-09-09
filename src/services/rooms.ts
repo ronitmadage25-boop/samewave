@@ -1,4 +1,4 @@
-import type { Category, RoomType, LiveRoom } from '@/types'
+import type { Category, RoomType, LiveRoom, DbRoom } from '@/types'
 import { supabase } from '@/lib/supabase'
 
 export interface EphemeralRoomAdvertisement {
@@ -52,10 +52,201 @@ export function toLiveRoom(ad: EphemeralRoomAdvertisement): LiveRoom {
   }
 }
 
+// ── PERSISTENT ROOM DB FUNCTIONS ────────────────────────────────────────────
+// The existing schema uses: host_id, type, category, visibility, capacity, duration_minutes
+// We map creator_id → host_id, room_type → type in queries
+
+/**
+ * Create a persistent room record in Supabase (PostgreSQL).
+ * This is separate from the ephemeral live session.
+ */
+export async function createRoomInDB(
+  input: CreateRoomInput,
+  creatorId: string
+): Promise<{ data: DbRoom | null; error: string | null }> {
+  // First ensure a profile row exists for this user (needed for host FK)
+  const { data, error } = await supabase
+    .from('rooms')
+    .insert({
+      host_id: creatorId,
+      title: input.title.trim(),
+      description: input.description?.trim() || null,
+      type: input.type,
+      category: input.category,
+      visibility: input.visibility ?? 'public',
+      capacity: input.capacity ?? 32,
+      duration_minutes: input.durationMinutes ?? 45,
+      status: 'active',
+    })
+    .select(`
+      id,
+      host_id,
+      title,
+      description,
+      type,
+      category,
+      visibility,
+      capacity,
+      status,
+      created_at,
+      updated_at,
+      creator:profiles!host_id(display_name, avatar_url, initials)
+    `)
+    .single()
+
+  if (error) {
+    console.error('[rooms] createRoomInDB error:', error)
+    return { data: null, error: error.message }
+  }
+
+  // Normalize to DbRoom shape
+  const raw = data as unknown as {
+    id: string
+    host_id: string
+    title: string
+    description: string | null
+    type: string
+    category: string
+    visibility: string
+    capacity: number
+    status: string
+    created_at: string
+    updated_at: string
+    creator: { display_name: string; avatar_url: string | null; initials: string }[] | null
+  }
+
+  // Supabase returns FK join as array — take first element
+  const creatorArr = raw.creator
+  const creator = Array.isArray(creatorArr) ? (creatorArr[0] ?? null) : (creatorArr ?? null)
+
+  const normalized: DbRoom = {
+    id: raw.id,
+    creator_id: raw.host_id,
+    title: raw.title,
+    description: raw.description,
+    room_type: raw.type as RoomType,
+    category: raw.category as Category,
+    visibility: (raw.visibility === 'public' ? 'public' : 'invite') as 'public' | 'invite',
+    capacity: raw.capacity,
+    status: raw.status as 'active' | 'ended',
+    created_at: raw.created_at,
+    updated_at: raw.updated_at,
+    creator: creator ? {
+      display_name: creator.display_name,
+      avatar_url: creator.avatar_url,
+      initials: creator.initials,
+    } : null,
+  }
+
+  return { data: normalized, error: null }
+}
+
+/**
+ * Fetch all public rooms from Supabase.
+ */
+export async function fetchAllPublicRooms(): Promise<{ data: DbRoom[]; error: string | null }> {
+  const { data, error } = await supabase
+    .from('rooms')
+    .select(`
+      id, host_id, title, description, type, category, visibility, capacity, status, created_at, updated_at,
+      creator:profiles!host_id(display_name, avatar_url, initials)
+    `)
+    .eq('visibility', 'public')
+    .eq('status', 'active')
+    .order('created_at', { ascending: false })
+    .limit(50)
+
+  if (error) {
+    console.error('[rooms] fetchAllPublicRooms error:', error)
+    return { data: [], error: error.message }
+  }
+
+  return { data: normalizeRooms(data ?? []), error: null }
+}
+
+/**
+ * Fetch rooms owned by the current user.
+ */
+export async function fetchMyRooms(creatorId: string): Promise<{ data: DbRoom[]; error: string | null }> {
+  const { data, error } = await supabase
+    .from('rooms')
+    .select(`
+      id, host_id, title, description, type, category, visibility, capacity, status, created_at, updated_at,
+      creator:profiles!host_id(display_name, avatar_url, initials)
+    `)
+    .eq('host_id', creatorId)
+    .eq('status', 'active')
+    .order('created_at', { ascending: false })
+
+  if (error) {
+    console.error('[rooms] fetchMyRooms error:', error)
+    return { data: [], error: error.message }
+  }
+  return { data: normalizeRooms(data ?? []), error: null }
+}
+
+/**
+ * Delete a room by ID. RLS ensures only the owner can delete.
+ */
+export async function deleteRoomFromDB(roomId: string): Promise<{ error: string | null }> {
+  const { error } = await supabase
+    .from('rooms')
+    .update({ status: 'ended' })
+    .eq('id', roomId)
+
+  if (error) {
+    console.error('[rooms] deleteRoomFromDB error:', error)
+    return { error: error.message }
+  }
+  return { error: null }
+}
+
+type RawRoom = {
+  id: string
+  host_id: string
+  title: string
+  description: string | null
+  type: string
+  category: string
+  visibility: string
+  capacity: number
+  status: string
+  created_at: string
+  updated_at: string
+  creator?: { display_name: string; avatar_url: string | null; initials: string }[] | null
+}
+
+function normalizeRooms(rows: unknown[]): DbRoom[] {
+  return (rows as RawRoom[]).map((raw) => {
+    // Supabase returns FK joins as arrays — take first element
+    const creatorArr = raw.creator as unknown as { display_name: string; avatar_url: string | null; initials: string }[] | null
+    const creator = Array.isArray(creatorArr) ? (creatorArr[0] ?? null) : (creatorArr ?? null)
+    return {
+      id: raw.id,
+      creator_id: raw.host_id,
+      title: raw.title,
+      description: raw.description,
+      room_type: raw.type as RoomType,
+      category: raw.category as Category,
+      visibility: (raw.visibility === 'public' ? 'public' : 'invite') as 'public' | 'invite',
+      capacity: raw.capacity,
+      status: raw.status as 'active' | 'ended',
+      created_at: raw.created_at,
+      updated_at: raw.updated_at,
+      creator: creator ? {
+        display_name: creator.display_name,
+        avatar_url: creator.avatar_url,
+        initials: creator.initials,
+      } : null,
+    }
+  })
+}
+
+// ── EPHEMERAL LOBBY (Supabase Realtime) ─────────────────────────────────────
+
 /**
  * Advertises an active room to the global ephemeral lobby (samewave-lobby).
  * Uses Realtime Presence so presence is automatically removed when host/browser disconnects.
- * Also responds to lobby-ping broadcasts from late subscribers.
  */
 export function advertiseRoomInLobby(ad: EphemeralRoomAdvertisement): {
   updateCount: (count: number) => void
@@ -78,7 +269,6 @@ export function advertiseRoomInLobby(ad: EphemeralRoomAdvertisement): {
 
   channel
     .on('broadcast', { event: 'lobby-ping' }, () => {
-      // Immediate response to newly connected clients
       sendAdBroadcast()
     })
     .subscribe(async (status) => {
@@ -116,10 +306,8 @@ export function advertiseRoomInLobby(ad: EphemeralRoomAdvertisement): {
 
 /**
  * Subscribes the Rooms/Discover page to the global ephemeral lobby (samewave-lobby).
- * Receives presence sync (handles late subscribers) & instant broadcasts.
  */
 export function subscribeToLobby(onUpdate: (rooms: LiveRoom[]) => void): () => void {
-  // Return existing channel if already listening, or create new
   const channel = supabase.channel('samewave-lobby', {
     config: { presence: { key: `visitor_${Math.random().toString(36).slice(2, 8)}` } },
   })
@@ -146,7 +334,6 @@ export function subscribeToLobby(onUpdate: (rooms: LiveRoom[]) => void): () => v
         }
       }
 
-      // Remove any rooms that dropped out of presence
       for (const existingId of Array.from(ephemeralRoomsMap.keys())) {
         if (!seenRoomIds.has(existingId)) {
           ephemeralRoomsMap.delete(existingId)
@@ -169,7 +356,6 @@ export function subscribeToLobby(onUpdate: (rooms: LiveRoom[]) => void): () => v
     })
     .subscribe((status) => {
       if (status === 'SUBSCRIBED') {
-        // Send a ping so any already active rooms immediately respond with an advertisement
         try {
           channel.send({
             type: 'broadcast',
@@ -180,7 +366,6 @@ export function subscribeToLobby(onUpdate: (rooms: LiveRoom[]) => void): () => v
       }
     })
 
-  // Initial dispatch
   dispatchUpdate()
 
   return () => {
@@ -198,38 +383,6 @@ export function subscribeToLobby(onUpdate: (rooms: LiveRoom[]) => void): () => v
  */
 export async function fetchRooms(): Promise<{ data: LiveRoom[]; error: string | null }> {
   return { data: Array.from(ephemeralRoomsMap.values()), error: null }
-}
-
-/**
- * Create a new ephemeral room session (purely client-generated, zero PostgreSQL storage).
- */
-export async function createRoom(
-  input: CreateRoomInput,
-  _hostId: string
-): Promise<{ data: LiveRoom | null; error: string | null }> {
-  const roomId = (typeof crypto !== 'undefined' && crypto.randomUUID)
-    ? crypto.randomUUID()
-    : `room_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
-
-  const room: LiveRoom = {
-    id: roomId,
-    title: input.title,
-    type: input.type,
-    category: input.category,
-    description: input.description ?? null,
-    visibility: input.visibility ?? 'public',
-    status: 'active',
-    capacity: input.capacity ?? 32,
-    duration_minutes: input.durationMinutes ?? 45,
-    member_count: 1,
-    host_name: 'You',
-    created_at: new Date().toISOString(),
-    expires_at: null,
-    tools: ['reactions', 'thought-graph'],
-  }
-
-  ephemeralRoomsMap.set(roomId, room)
-  return { data: room, error: null }
 }
 
 /**

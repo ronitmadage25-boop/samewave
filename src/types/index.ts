@@ -4,6 +4,27 @@ export type RoomType = 'text' | 'audio' | 'video'
 
 export type PresenceState = 'active' | 'typing' | 'drawing' | 'thinking' | 'away' | 'speaking'
 
+// ── Persistent Room (Supabase PostgreSQL) ─────────────────────────────────────
+export interface DbRoom {
+  id: string
+  creator_id: string
+  title: string
+  description?: string | null
+  room_type: RoomType
+  category: Category
+  visibility: 'public' | 'invite'
+  capacity: number
+  status: 'active' | 'ended'
+  created_at: string
+  updated_at: string
+  // joined from profiles
+  creator?: {
+    display_name: string
+    avatar_url: string | null
+    initials: string
+  } | null
+}
+
 export interface Topic {
   id: string
   label: string
@@ -163,7 +184,7 @@ export interface Room {
   memberCount?: number
 }
 
-// ── Live Room (for discovery list) ─────────────────────────────────────────
+// ── Live Room (for discovery list — ephemeral) ──────────────────────────────
 export interface LiveRoom {
   id: string
   title: string

@@ -1,12 +1,31 @@
-import { useState } from 'react'
-import { motion } from 'framer-motion'
+import { useEffect, useState, useCallback } from 'react'
+import { motion, AnimatePresence } from 'framer-motion'
 import { useNavigate } from 'react-router-dom'
 import {
   Radio, Users, Clock, MessageSquare, Mic, Video,
-  ArrowRight, Zap, Activity, TrendingUp, Plus, Compass, Sparkles
+  Plus, Trash2, ArrowRight, AlertCircle, RefreshCw, MoreVertical
 } from 'lucide-react'
 import { useAppStore } from '@/store/useAppStore'
-import type { Topic, RoomType } from '@/types'
+import { fetchMyRooms, fetchAllPublicRooms, deleteRoomFromDB } from '@/services/rooms'
+import type { DbRoom, RoomType } from '@/types'
+
+const ROOM_TYPE_ICONS: Record<RoomType, typeof MessageSquare> = {
+  text: MessageSquare,
+  audio: Mic,
+  video: Video,
+}
+
+const ROOM_TYPE_COLORS: Record<RoomType, string> = {
+  text: 'var(--color-text-room)',
+  audio: 'var(--color-audio-room)',
+  video: 'var(--color-video-room)',
+}
+
+const ROOM_TYPE_BG: Record<RoomType, string> = {
+  text: 'var(--color-text-room-soft)',
+  audio: 'var(--color-audio-room-soft)',
+  video: 'var(--color-video-room-soft)',
+}
 
 const CATEGORY_COLORS: Record<string, string> = {
   Tech: 'var(--color-tech)',
@@ -15,462 +34,441 @@ const CATEGORY_COLORS: Record<string, string> = {
   Lifestyle: 'var(--color-lifestyle)',
 }
 
-const ROOM_TYPE_ICONS: Record<RoomType, typeof MessageSquare> = {
-  text: MessageSquare,
-  audio: Mic,
-  video: Video,
+function timeAgo(isoDate: string): string {
+  const ms = Date.now() - new Date(isoDate).getTime()
+  const mins = Math.floor(ms / 60000)
+  if (mins < 1) return 'just now'
+  if (mins < 60) return `${mins}m ago`
+  const hrs = Math.floor(mins / 60)
+  if (hrs < 24) return `${hrs}h ago`
+  return `${Math.floor(hrs / 24)}d ago`
 }
 
-const ROOM_TYPE_COLORS = {
-  text: 'var(--color-text-room)',
-  audio: 'var(--color-audio-room)',
-  video: 'var(--color-video-room)',
-}
-
-const ROOM_TYPE_BG = {
-  text: 'var(--color-text-room-soft)',
-  audio: 'var(--color-audio-room-soft)',
-  video: 'var(--color-video-room-soft)',
-}
-
-const ACTIVITY_LABELS = {
-  quiet: { label: 'Quiet', color: 'var(--color-muted)' },
-  active: { label: 'Active', color: 'var(--color-resonance)' },
-  buzzing: { label: 'Buzzing', color: 'var(--color-signal)' },
-}
-
-function RoomCard({ topic, onEnter, delay }: { topic: Topic; onEnter: () => void; delay: number }) {
-  const Icon = ROOM_TYPE_ICONS[topic.type]
-  const typeColor = ROOM_TYPE_COLORS[topic.type]
-  const typeBg = ROOM_TYPE_BG[topic.type]
-  const activity = ACTIVITY_LABELS[topic.activity]
+function RoomCard({
+  room,
+  isOwner,
+  onEnter,
+  onDelete,
+}: {
+  room: DbRoom
+  isOwner: boolean
+  onEnter: () => void
+  onDelete: () => void
+}) {
+  const Icon = ROOM_TYPE_ICONS[room.room_type]
+  const typeColor = ROOM_TYPE_COLORS[room.room_type]
+  const typeBg = ROOM_TYPE_BG[room.room_type]
+  const catColor = CATEGORY_COLORS[room.category] || 'var(--color-muted)'
+  const [menuOpen, setMenuOpen] = useState(false)
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 16 }}
+      layout
+      initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ delay, duration: 0.35 }}
-      className="group cursor-pointer rounded-2xl border p-5 transition-all hover:border-[var(--color-muted)] hover:shadow-xl relative overflow-hidden flex flex-col justify-between"
-      style={{
-        background: 'var(--color-surface)',
-        borderColor: topic.activity === 'buzzing' ? 'var(--color-signal)' : 'var(--color-border)',
-      }}
-      onClick={onEnter}
+      exit={{ opacity: 0, y: -8 }}
+      className="rounded-2xl border p-5 relative group"
+      style={{ background: 'var(--color-surface)', borderColor: 'var(--color-border)' }}
     >
-      {/* Top Type & Status */}
-      <div>
-        <div className="flex items-start justify-between mb-3.5">
-          <div className="flex items-center gap-2">
-            <div
-              className="w-8 h-8 rounded-xl flex items-center justify-center shrink-0 shadow-xs"
-              style={{ background: typeBg, border: `1px solid ${typeColor}40` }}
-            >
-              <Icon size={16} style={{ color: typeColor }} strokeWidth={1.7} />
-            </div>
-            <div>
-              <span className="text-[10px] font-mono uppercase tracking-widest font-semibold" style={{ color: typeColor }}>
-                {topic.type} space
-              </span>
-            </div>
+      {/* Type badge + owner menu */}
+      <div className="flex items-start justify-between mb-4">
+        <div className="flex items-center gap-2.5">
+          <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0"
+            style={{ background: typeBg, border: `1px solid ${typeColor}30` }}>
+            <Icon size={16} style={{ color: typeColor }} strokeWidth={1.5} />
           </div>
-
-          <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-[var(--color-bg)] border border-[var(--color-border)]">
-            {topic.activity === 'buzzing' && (
-              <span className="relative flex h-2 w-2">
-                <span
-                  className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75"
-                  style={{ background: activity.color }}
-                />
-                <span
-                  className="relative inline-flex rounded-full h-2 w-2"
-                  style={{ background: activity.color }}
-                />
-              </span>
-            )}
-            <span className="text-[10px] font-mono font-medium" style={{ color: activity.color }}>
-              {activity.label}
+          <div>
+            <span className="text-[10px] font-mono uppercase tracking-widest font-semibold"
+              style={{ color: typeColor }}>
+              {room.room_type}
             </span>
+            <div className="flex items-center gap-1.5 mt-0.5">
+              <span className="text-[10px] px-1.5 py-0.5 rounded font-mono"
+                style={{ background: `${catColor}15`, color: catColor }}>
+                {room.category}
+              </span>
+            </div>
           </div>
         </div>
 
-        {/* Title */}
-        <h3 className="font-display text-lg font-bold mb-1.5 leading-snug group-hover:text-[var(--color-signal)] transition-colors text-[var(--color-fg)]">
-          {topic.label}
-        </h3>
-
-        {/* Sample thought preview */}
-        <p className="text-xs leading-relaxed mb-4 line-clamp-2 italic text-[var(--color-muted)]">
-          "{topic.sampleThoughts[0]}"
-        </p>
-      </div>
-
-      {/* Footer info: resonance & minds */}
-      <div>
-        {topic.resonance !== undefined && (
-          <div className="mb-3">
-            <div className="flex items-center justify-between mb-1">
-              <span className="text-[10px] font-mono uppercase tracking-widest text-[var(--color-muted)]">
-                Resonance Match
-              </span>
-              <span className="text-[11px] font-mono font-bold text-[var(--color-resonance)]">
-                {topic.resonance}%
-              </span>
-            </div>
-            <div className="h-1 rounded-full overflow-hidden bg-[var(--color-surface-2)]">
-              <motion.div
-                className="h-full rounded-full bg-[var(--color-resonance)]"
-                initial={{ width: 0 }}
-                animate={{ width: `${topic.resonance}%` }}
-                transition={{ delay: delay + 0.2, duration: 0.6 }}
-              />
-            </div>
+        {/* Owner actions */}
+        {isOwner && (
+          <div className="relative">
+            <button
+              onClick={(e) => { e.stopPropagation(); setMenuOpen(!menuOpen) }}
+              className="w-7 h-7 flex items-center justify-center rounded-lg opacity-0 group-hover:opacity-100 transition-opacity"
+              style={{ color: 'var(--color-muted)' }}
+            >
+              <MoreVertical size={14} />
+            </button>
+            <AnimatePresence>
+              {menuOpen && (
+                <>
+                  <motion.div
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    className="fixed inset-0 z-40"
+                    onClick={() => setMenuOpen(false)}
+                  />
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.95, y: -8 }}
+                    animate={{ opacity: 1, scale: 1, y: 0 }}
+                    exit={{ opacity: 0, scale: 0.95 }}
+                    className="absolute right-0 top-8 z-50 rounded-xl border shadow-xl overflow-hidden"
+                    style={{ background: 'var(--color-surface)', borderColor: 'var(--color-border)', width: 160 }}
+                  >
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setMenuOpen(false); onDelete() }}
+                      className="w-full flex items-center gap-2.5 px-4 py-3 text-sm text-left hover:bg-red-500/10 transition-colors"
+                      style={{ color: '#EF4444' }}
+                    >
+                      <Trash2 size={13} />
+                      Delete wavelength
+                    </button>
+                  </motion.div>
+                </>
+              )}
+            </AnimatePresence>
           </div>
         )}
+      </div>
 
-        <div className="flex items-center justify-between pt-2 border-t border-[var(--color-border)]/60">
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-1">
-              <Users size={12} className="text-[var(--color-muted)]" />
-              <span className="text-xs font-mono text-[var(--color-muted)]">
-                {topic.mindsCount}
-              </span>
-            </div>
-            <div className="flex items-center gap-1">
-              <Clock size={12} className="text-[var(--color-muted)]" />
-              <span className="text-xs font-mono text-[var(--color-muted)]">
-                ~{topic.minutesRemaining}m
-              </span>
-            </div>
-            <span
-              className="text-[10px] px-1.5 py-0.5 rounded font-mono font-medium"
-              style={{
-                background: `${CATEGORY_COLORS[topic.category]}18`,
-                color: CATEGORY_COLORS[topic.category],
-              }}
-            >
-              {topic.category}
+      {/* Title */}
+      <h3 className="font-display text-base font-semibold mb-1.5 leading-snug"
+        style={{ color: 'var(--color-fg)' }}>
+        {room.title}
+      </h3>
+
+      {room.description && (
+        <p className="text-xs leading-relaxed mb-4 line-clamp-2"
+          style={{ color: 'var(--color-muted)' }}>
+          {room.description}
+        </p>
+      )}
+
+      {/* Footer */}
+      <div className="flex items-center justify-between pt-3 border-t"
+        style={{ borderColor: 'var(--color-border)' }}>
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1">
+            <Clock size={11} style={{ color: 'var(--color-muted)' }} />
+            <span className="text-[11px] font-mono" style={{ color: 'var(--color-muted)' }}>
+              {timeAgo(room.created_at)}
             </span>
           </div>
-
-          <div className="flex items-center gap-1 text-xs font-medium text-[var(--color-signal)] group-hover:translate-x-1 transition-transform">
-            <span>Enter</span>
-            <ArrowRight size={13} />
+          <div className="flex items-center gap-1">
+            <Users size={11} style={{ color: 'var(--color-muted)' }} />
+            <span className="text-[11px] font-mono" style={{ color: 'var(--color-muted)' }}>
+              {room.capacity} cap
+            </span>
           </div>
         </div>
+
+        <button
+          onClick={onEnter}
+          className="flex items-center gap-1 text-xs font-semibold transition-all hover:gap-2"
+          style={{ color: 'var(--color-signal)' }}
+        >
+          Enter
+          <ArrowRight size={13} />
+        </button>
       </div>
+    </motion.div>
+  )
+}
+
+function DeleteConfirmModal({
+  room,
+  onConfirm,
+  onCancel,
+}: {
+  room: DbRoom
+  onConfirm: () => void
+  onCancel: () => void
+}) {
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)' }}
+      onClick={onCancel}
+    >
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        exit={{ opacity: 0, scale: 0.95 }}
+        className="rounded-2xl border p-6 max-w-sm w-full"
+        style={{ background: 'var(--color-surface)', borderColor: 'var(--color-border)' }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h3 className="font-display text-lg font-semibold mb-2"
+          style={{ color: 'var(--color-fg)' }}>
+          Delete this wavelength?
+        </h3>
+        <p className="text-sm mb-1" style={{ color: 'var(--color-muted)' }}>
+          <strong style={{ color: 'var(--color-fg)' }}>{room.title}</strong>
+        </p>
+        <p className="text-xs mb-6" style={{ color: 'var(--color-muted)' }}>
+          This removes the saved room from your Home. Any active live session will also end.
+        </p>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={onCancel}
+            className="flex-1 py-2.5 rounded-xl border text-sm font-medium transition-all"
+            style={{ borderColor: 'var(--color-border)', color: 'var(--color-muted)' }}
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            className="flex-1 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-white text-sm font-semibold transition-all"
+          >
+            Delete
+          </button>
+        </div>
+      </motion.div>
     </motion.div>
   )
 }
 
 export default function HomePage() {
   const navigate = useNavigate()
-  const topics = useAppStore((s) => s.topics)
-  const wavelength = useAppStore((s) => s.wavelength)
-  const dailySignals = useAppStore((s) => s.dailySignals)
-  const activityFeed = useAppStore((s) => s.activityFeed)
-
   const user = useAppStore((s) => s.user)
+  const profile = useAppStore((s) => s.profile)
   const openAuthModal = useAppStore((s) => s.openAuthModal)
 
-  const [activeTab, setActiveTab] = useState<'all' | 'resonant' | 'audio' | 'video'>('all')
+  const [myRooms, setMyRooms] = useState<DbRoom[]>([])
+  const [publicRooms, setPublicRooms] = useState<DbRoom[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [tab, setTab] = useState<'mine' | 'public'>('mine')
+  const [deleteTarget, setDeleteTarget] = useState<DbRoom | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
-  const totalMinds = topics.reduce((acc, t) => acc + t.mindsCount, 0)
-  const buzzingRooms = topics.filter((t) => t.activity === 'buzzing')
+  const loadRooms = useCallback(async () => {
+    setLoading(true)
+    setError(null)
 
-  const displayedRooms = topics.filter((t) => {
-    if (activeTab === 'resonant') return (t.resonance ?? 0) >= 45
-    if (activeTab === 'audio') return t.type === 'audio'
-    if (activeTab === 'video') return t.type === 'video'
-    return true
-  })
+    if (user) {
+      const [myRes, pubRes] = await Promise.all([
+        fetchMyRooms(user.id),
+        fetchAllPublicRooms(),
+      ])
+      if (myRes.error) setError(myRes.error)
+      else setMyRooms(myRes.data)
 
-  function handleEnter(_topicId: string) {
-    if (!user) {
-      openAuthModal('Sign in with Google to join this room.')
-      return
+      if (!pubRes.error) setPublicRooms(pubRes.data)
+    } else {
+      const pubRes = await fetchAllPublicRooms()
+      if (!pubRes.error) setPublicRooms(pubRes.data)
     }
-    navigate('/rooms')
+
+    setLoading(false)
+  }, [user])
+
+  useEffect(() => {
+    loadRooms()
+  }, [loadRooms])
+
+  async function handleDelete() {
+    if (!deleteTarget) return
+    setDeleting(true)
+    const { error } = await deleteRoomFromDB(deleteTarget.id)
+    if (error) {
+      console.error('Delete failed:', error)
+    } else {
+      setMyRooms((prev) => prev.filter((r) => r.id !== deleteTarget.id))
+      setPublicRooms((prev) => prev.filter((r) => r.id !== deleteTarget.id))
+    }
+    setDeleteTarget(null)
+    setDeleting(false)
   }
 
-  function handleCreateClick() {
+  function handleEnter(room: DbRoom) {
     if (!user) {
-      openAuthModal('Sign in with Google to create your own temporary space.')
+      openAuthModal('Sign in with Google to enter a room.')
       return
     }
-    navigate('/create-room')
+    navigate(`/room/${room.id}?type=${room.room_type}&title=${encodeURIComponent(room.title)}&category=${encodeURIComponent(room.category)}`)
   }
+
+  const displayedRooms = tab === 'mine' ? myRooms : publicRooms.filter((r) => r.creator_id !== user?.id)
 
   return (
-    <div className="min-h-screen pb-24 lg:pb-12 bg-[var(--color-bg)] relative overflow-hidden">
-      {/* ── Ambient Background Video ────────────────────────────────────────── */}
-      <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden">
-        <video
-          src="/background.mp4"
-          autoPlay
-          loop
-          muted
-          playsInline
-          className="w-full h-full object-cover opacity-20"
-        />
-        <div className="absolute inset-0 bg-gradient-to-b from-[#0A0A0F]/85 via-[#0A0A0F]/75 to-[#0A0A0F]/95" />
-      </div>
-
-      {/* ── Content Layer ───────────────────────────────────────────────────── */}
-      <div className="relative z-10">
-        {/* Top Bar */}
-        <header className="sticky top-0 z-20 px-6 lg:px-10 py-4 border-b border-[var(--color-border)] bg-[var(--color-surface)]/80 backdrop-blur-xl flex items-center justify-between">
+    <div className="min-h-screen pb-24 lg:pb-8" style={{ background: 'var(--color-bg)' }}>
+      {/* Header */}
+      <header className="sticky top-0 z-20 px-6 lg:px-8 py-4 border-b"
+        style={{ background: 'rgba(10,10,15,0.92)', backdropFilter: 'blur(16px)', borderColor: 'var(--color-border)' }}>
+        <div className="flex items-center justify-between">
           <div>
-            <h1 className="font-display text-xl font-bold text-[var(--color-fg)]">
-              Now on SameWave
+            <h1 className="font-display text-xl font-semibold" style={{ color: 'var(--color-fg)' }}>
+              {user ? `Hey, ${profile?.displayName?.split(' ')[0] ?? 'there'}` : 'SameWave'}
             </h1>
-          {wavelength ? (
-            <p className="text-xs text-[var(--color-muted)] flex items-center gap-1.5 mt-0.5 font-mono">
-              <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-signal)] animate-pulse" />
-              Wavelength: "{wavelength.text.slice(0, 42)}…"
+            <p className="text-xs mt-0.5" style={{ color: 'var(--color-muted)' }}>
+              {user ? 'Your wavelengths' : 'Ephemeral social spaces around shared ideas'}
             </p>
-          ) : (
-            <p className="text-xs text-[var(--color-muted)] mt-0.5">
-              Temporary social spaces formed around current intent
-            </p>
-          )}
-        </div>
-
-        {/* Primary Action Buttons */}
-        <div className="flex items-center gap-2.5">
-          <button
-            onClick={() => navigate('/discover')}
-            className="hidden sm:flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] text-[var(--color-fg)] transition-all"
-          >
-            <Compass size={14} className="text-[var(--color-resonance)]" />
-            <span>Social Field</span>
-          </button>
-
-          <button
-            onClick={() => navigate('/intent')}
-            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] text-[var(--color-fg)] transition-all"
-          >
-            <Radio size={14} className="text-[var(--color-signal)]" />
-            <span>Set Intent</span>
-          </button>
-
-          <button
-            onClick={handleCreateClick}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold bg-[var(--color-signal)] text-white hover:opacity-90 transition-all shadow-md"
-          >
-            <Plus size={15} strokeWidth={2.5} />
-            <span>Create Space</span>
-          </button>
-        </div>
-      </header>
-
-      <div className="px-6 lg:px-10 py-6 max-w-7xl mx-auto space-y-8">
-        {/* Live Social Pulse Ribbon */}
-        <div className="p-4 rounded-2xl bg-[var(--color-surface)] border border-[var(--color-border)] flex flex-wrap items-center justify-between gap-4 shadow-sm">
-          <div className="flex items-center gap-3">
-            <span className="relative flex h-3 w-3">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[var(--color-signal)] opacity-75" />
-              <span className="relative inline-flex rounded-full h-3 w-3 bg-[var(--color-signal)]" />
-            </span>
-            <div>
-              <p className="text-xs font-semibold text-[var(--color-fg)]">
-                {totalMinds} minds gathered across {topics.length} temporary spaces
-              </p>
-              <p className="text-[11px] font-mono text-[var(--color-muted)]">
-                Zero permanent feeds. Only real presence and connected thoughts.
-              </p>
-            </div>
           </div>
 
           <div className="flex items-center gap-2">
             <button
-              onClick={() => navigate('/discover')}
-              className="flex items-center gap-1.5 text-xs font-semibold text-[var(--color-signal)] hover:underline"
+              onClick={() => loadRooms()}
+              className="w-8 h-8 flex items-center justify-center rounded-lg transition-all"
+              style={{ color: 'var(--color-muted)' }}
+              title="Refresh"
             >
-              <span>Explore Spatial Field</span>
-              <ArrowRight size={13} />
+              <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
+            </button>
+            <button
+              onClick={() => {
+                if (!user) {
+                  openAuthModal('Sign in with Google to create a room.')
+                  return
+                }
+                navigate('/create-room')
+              }}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold"
+              style={{ background: 'var(--color-signal)', color: 'white' }}
+            >
+              <Plus size={15} strokeWidth={2.5} />
+              <span className="hidden sm:inline">Create room</span>
             </button>
           </div>
         </div>
 
-        {/* Buzzing Now Strip */}
-        {buzzingRooms.length > 0 && (
-          <div className="space-y-3">
-            <div className="flex items-center gap-2">
-              <Sparkles size={15} className="text-[var(--color-signal)]" />
-              <h2 className="text-xs font-mono uppercase tracking-widest font-bold text-[var(--color-fg)]">
-                Buzzing right now
-              </h2>
-            </div>
+        {/* Tab toggle — only show if authenticated */}
+        {user && (
+          <div className="flex items-center gap-1 mt-3 border rounded-xl p-0.5 w-fit"
+            style={{ borderColor: 'var(--color-border)', background: 'var(--color-surface)' }}>
+            {[
+              { id: 'mine' as const, label: 'My wavelengths' },
+              { id: 'public' as const, label: 'All public' },
+            ].map((t) => (
+              <button
+                key={t.id}
+                onClick={() => setTab(t.id)}
+                className="px-3 py-1.5 rounded-lg text-xs font-medium transition-all"
+                style={{
+                  background: tab === t.id ? 'var(--color-surface-2)' : 'transparent',
+                  color: tab === t.id ? 'var(--color-fg)' : 'var(--color-muted)',
+                }}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+        )}
+      </header>
 
-            <div className="flex items-center gap-3 overflow-x-auto thin-scroll pb-2">
-              {buzzingRooms.map((topic) => {
-                const Icon = ROOM_TYPE_ICONS[topic.type]
-                const color = ROOM_TYPE_COLORS[topic.type]
-
-                return (
-                  <button
-                    key={topic.id}
-                    onClick={() => handleEnter(topic.id)}
-                    className="flex items-center gap-2.5 px-4 py-2.5 rounded-xl bg-[var(--color-surface)] border border-[var(--color-signal)] hover:bg-[var(--color-surface-2)] transition-all shrink-0 shadow-xs group text-left"
-                  >
-                    <div
-                      className="w-7 h-7 rounded-lg flex items-center justify-center text-white shrink-0"
-                      style={{ backgroundColor: color }}
-                    >
-                      <Icon size={14} />
-                    </div>
-                    <div>
-                      <p className="text-xs font-bold text-[var(--color-fg)] group-hover:text-[var(--color-signal)] transition-colors truncate max-w-[160px]">
-                        {topic.label}
-                      </p>
-                      <p className="text-[10px] font-mono text-[var(--color-muted)]">
-                        {topic.mindsCount} active • {topic.type}
-                      </p>
-                    </div>
-                  </button>
-                )
-              })}
-            </div>
+      <div className="px-6 lg:px-8 py-6 max-w-5xl mx-auto">
+        {/* Error state */}
+        {error && (
+          <div className="flex items-center gap-3 p-4 rounded-xl border mb-6"
+            style={{ background: 'var(--color-surface)', borderColor: 'var(--color-border)' }}>
+            <AlertCircle size={16} style={{ color: 'var(--color-signal)' }} />
+            <p className="text-sm" style={{ color: 'var(--color-muted)' }}>
+              Could not load rooms: {error}
+            </p>
+            <button onClick={loadRooms} className="ml-auto text-xs font-medium"
+              style={{ color: 'var(--color-signal)' }}>
+              Retry
+            </button>
           </div>
         )}
 
-        {/* Main Grid Section */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          {/* Active Spaces Grid */}
-          <div className="lg:col-span-2 space-y-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <TrendingUp size={16} className="text-[var(--color-signal)]" />
-                <h2 className="font-display text-base font-bold text-[var(--color-fg)]">
-                  Active Spaces
-                </h2>
-              </div>
-
-              {/* Filter Tabs */}
-              <div className="flex items-center gap-1 border border-[var(--color-border)] rounded-xl p-0.5 bg-[var(--color-surface)]">
-                {[
-                  { id: 'all' as const, label: 'All' },
-                  { id: 'resonant' as const, label: 'Resonant' },
-                  { id: 'audio' as const, label: 'Audio' },
-                  { id: 'video' as const, label: 'Video' },
-                ].map((tab) => (
-                  <button
-                    key={tab.id}
-                    onClick={() => setActiveTab(tab.id)}
-                    className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${
-                      activeTab === tab.id
-                        ? 'bg-[var(--color-surface-2)] text-[var(--color-signal)] font-bold shadow-xs'
-                        : 'text-[var(--color-muted)] hover:text-[var(--color-fg)]'
-                    }`}
-                  >
-                    {tab.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {displayedRooms.map((topic, i) => (
-                <RoomCard
-                  key={topic.id}
-                  topic={topic}
-                  onEnter={() => handleEnter(topic.id)}
-                  delay={i * 0.04}
-                />
-              ))}
-            </div>
+        {/* Loading state */}
+        {loading && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="rounded-2xl border p-5 animate-pulse"
+                style={{ background: 'var(--color-surface)', borderColor: 'var(--color-border)', minHeight: 160 }} />
+            ))}
           </div>
+        )}
 
-          {/* Right Sidebar: Daily Signals & Activity */}
-          <div className="space-y-6">
-            {/* Daily Signals */}
-            <div className="p-5 rounded-2xl bg-[var(--color-surface)] border border-[var(--color-border)] space-y-4 shadow-sm">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Zap size={15} className="text-[var(--color-signal)]" />
-                  <h3 className="font-semibold text-sm text-[var(--color-fg)]">
-                    Daily Signals
-                  </h3>
+        {/* Room grid */}
+        {!loading && (
+          <AnimatePresence mode="wait">
+            {displayedRooms.length === 0 ? (
+              <motion.div
+                key="empty"
+                initial={{ opacity: 0, y: 12 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="text-center py-20"
+              >
+                <div className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4"
+                  style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}>
+                  <Radio size={28} style={{ color: 'var(--color-muted)' }} strokeWidth={1.5} />
                 </div>
-                <button
-                  onClick={() => navigate('/current')}
-                  className="text-xs text-[var(--color-muted)] hover:text-[var(--color-fg)]"
-                >
-                  Stream →
-                </button>
-              </div>
-
-              <div className="space-y-3">
-                {dailySignals.slice(0, 3).map((signal) => (
-                  <div
-                    key={signal.id}
-                    className="p-3 rounded-xl bg-[var(--color-bg)] border border-[var(--color-border)] space-y-2"
-                  >
-                    <p className="text-xs leading-relaxed italic text-[var(--color-fg)]">
-                      "{signal.text}"
-                    </p>
-                    <div className="flex items-center justify-between text-[10px] font-mono text-[var(--color-muted)]">
-                      <span>{signal.authorName}</span>
-                      <span>
-                        {Object.values(signal.reactions).reduce((a, b) => a + b, 0)} reactions
-                      </span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Live Flow / Activity Events */}
-            <div className="p-5 rounded-2xl bg-[var(--color-surface)] border border-[var(--color-border)] space-y-4 shadow-sm">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Activity size={15} className="text-[var(--color-muted)]" />
-                  <h3 className="font-semibold text-sm text-[var(--color-fg)]">
-                    Live Flow
-                  </h3>
-                </div>
-                <button
-                  onClick={() => navigate('/current')}
-                  className="text-xs text-[var(--color-muted)] hover:text-[var(--color-fg)]"
-                >
-                  All →
-                </button>
-              </div>
-
-              <div className="space-y-2.5">
-                {activityFeed.slice(0, 4).map((evt) => (
-                  <div key={evt.id} className="flex items-start gap-2.5 text-xs">
-                    <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-signal)] mt-1.5 shrink-0" />
-                    <div>
-                      <p className="font-medium text-[var(--color-fg)]">{evt.title}</p>
-                      {evt.subtitle && (
-                        <p className="text-[11px] text-[var(--color-muted)]">{evt.subtitle}</p>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Create Room Promotion Card */}
-            <div
-              onClick={handleCreateClick}
-              className="p-5 rounded-2xl border-2 border-dashed border-[var(--color-border)] hover:border-[var(--color-signal)] cursor-pointer transition-all bg-[var(--color-surface)]/50 group"
-            >
-              <div className="flex items-center gap-2 mb-1">
-                <Plus size={16} className="text-[var(--color-signal)] group-hover:scale-125 transition-transform" />
-                <p className="font-bold text-sm text-[var(--color-fg)]">
-                  Form a New Social Space
+                <p className="text-base font-semibold mb-2" style={{ color: 'var(--color-fg)' }}>
+                  {tab === 'mine' ? 'No wavelengths yet.' : 'No public rooms right now.'}
                 </p>
-              </div>
-              <p className="text-xs text-[var(--color-muted)]">
-                Start a Text, Audio, or Video room around an idea you are exploring right now.
-              </p>
-            </div>
-          </div>
+                <p className="text-sm mb-6" style={{ color: 'var(--color-muted)' }}>
+                  {tab === 'mine'
+                    ? 'Create your first wavelength to get started.'
+                    : 'Be the first to create one.'}
+                </p>
+                {user ? (
+                  <button
+                    onClick={() => navigate('/create-room')}
+                    className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold"
+                    style={{ background: 'var(--color-signal)', color: 'white' }}
+                  >
+                    <Plus size={15} />
+                    Create a room
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => openAuthModal('Sign in to create a room.')}
+                    className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold"
+                    style={{ background: 'var(--color-signal)', color: 'white' }}
+                  >
+                    Sign in to create
+                  </button>
+                )}
+              </motion.div>
+            ) : (
+              <motion.div
+                key="grid"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4"
+              >
+                {displayedRooms.map((room) => (
+                  <RoomCard
+                    key={room.id}
+                    room={room}
+                    isOwner={room.creator_id === user?.id}
+                    onEnter={() => handleEnter(room)}
+                    onDelete={() => setDeleteTarget(room)}
+                  />
+                ))}
+              </motion.div>
+            )}
+          </AnimatePresence>
+        )}
+      </div>
+
+      {/* Delete confirm modal */}
+      <AnimatePresence>
+        {deleteTarget && (
+          <DeleteConfirmModal
+            room={deleteTarget}
+            onConfirm={handleDelete}
+            onCancel={() => setDeleteTarget(null)}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Loading overlay during delete */}
+      {deleting && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center"
+          style={{ background: 'rgba(0,0,0,0.5)' }}>
+          <div className="text-sm font-mono" style={{ color: 'white' }}>Deleting…</div>
         </div>
-      </div>
-      </div>
+      )}
     </div>
   )
 }

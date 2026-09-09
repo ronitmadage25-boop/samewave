@@ -1,16 +1,14 @@
 import { NavLink, useLocation } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Home, DoorOpen, Zap, Activity, User, Plus, Radio, Compass } from 'lucide-react'
+import { Home, Radio, Zap, User, Plus, Wifi } from 'lucide-react'
 import { useAppStore } from '@/store/useAppStore'
 import type { ReactNode } from 'react'
 
 const NAV_ITEMS = [
   { to: '/home', label: 'Home', icon: Home },
-  { to: '/discover', label: 'Field', icon: Compass },
-  { to: '/rooms', label: 'Rooms', icon: DoorOpen },
+  { to: '/rooms', label: 'Live', icon: Wifi },
   { to: '/thoughts', label: 'Thoughts', icon: Zap },
-  { to: '/current', label: 'Current', icon: Activity },
-  { to: '/identity', label: 'You', icon: User },
+  { to: '/identity', label: 'Identity', icon: User },
 ]
 
 function LiveDot() {
@@ -27,8 +25,6 @@ function LiveDot() {
 export function AppShell({ children }: { children: ReactNode }) {
   const location = useLocation()
   const activeRoom = useAppStore((s) => s.activeRoom)
-  const activityFeed = useAppStore((s) => s.activityFeed)
-  const unreadCount = activityFeed.filter(e => e.timestamp > Date.now() - 1000 * 60 * 5).length
 
   return (
     <div className="flex h-screen overflow-hidden" style={{ background: 'var(--color-bg)' }}>
@@ -71,12 +67,6 @@ export function AppShell({ children }: { children: ReactNode }) {
                 )}
                 <Icon size={18} strokeWidth={isActive ? 2 : 1.5} />
                 <span className="hidden xl:block text-sm font-medium">{label}</span>
-                {to === '/current' && unreadCount > 0 && (
-                  <span className="hidden xl:flex ml-auto text-[10px] font-data font-semibold px-1.5 py-0.5 rounded-full"
-                    style={{ background: 'var(--color-signal)', color: 'white' }}>
-                    {unreadCount}
-                  </span>
-                )}
                 {to === '/rooms' && activeRoom && (
                   <span className="hidden xl:block ml-auto">
                     <LiveDot />
@@ -141,30 +131,24 @@ export function AppShell({ children }: { children: ReactNode }) {
       {/* Bottom tab bar — mobile */}
       <nav className="fixed bottom-0 left-0 right-0 lg:hidden z-50 border-t"
         style={{ background: 'var(--color-surface)', borderColor: 'var(--color-border)' }}>
-        <div className="flex items-center justify-around px-2 py-2 safe-area-inset-bottom">
+        <div className="flex items-center justify-around px-1 py-2 safe-area-inset-bottom">
           {NAV_ITEMS.map(({ to, label, icon: Icon }) => {
             const isActive = location.pathname === to
             return (
               <NavLink
                 key={to}
                 to={to}
-                className="flex flex-col items-center gap-1 px-3 py-1.5 rounded-lg relative"
+                className="flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-lg relative min-w-[56px]"
                 style={{ color: isActive ? 'var(--color-signal)' : 'var(--color-muted)' }}
               >
                 <Icon size={20} strokeWidth={isActive ? 2 : 1.5} />
                 <span className="text-[10px] font-medium">{label}</span>
-                {to === '/current' && unreadCount > 0 && (
-                  <span className="absolute top-0 right-1 w-4 h-4 text-[9px] font-semibold flex items-center justify-center rounded-full"
-                    style={{ background: 'var(--color-signal)', color: 'white' }}>
-                    {unreadCount}
-                  </span>
-                )}
               </NavLink>
             )
           })}
           <NavLink
             to="/create-room"
-            className="flex flex-col items-center gap-1 px-3 py-1.5 rounded-lg"
+            className="flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-lg min-w-[56px]"
             style={{ color: location.pathname === '/create-room' ? 'var(--color-signal)' : 'var(--color-muted)' }}
           >
             <Plus size={20} strokeWidth={1.5} />
