@@ -1,19 +1,22 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 
-const rawUrl = (import.meta.env.VITE_SUPABASE_URL || 'https://cewugwkgftolebynohqp.supabase.co') as string
-const rawPublishableKey = (import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY || '') as string
+const rawUrl = (import.meta.env.VITE_SW_SUPABASE_URL || '') as string
+const rawPublishableKey = (import.meta.env.VITE_SW_SUPABASE_KEY || '') as string
 
 const supabaseUrl = rawUrl.replace(/^["']|["']$/g, '').trim()
 const supabasePublishableKey = rawPublishableKey.replace(/^["']|["']$/g, '').trim()
 
+// Safe diagnostics — report true/false only, never expose the actual key
+export const SUPABASE_URL_PRESENT: boolean = Boolean(supabaseUrl && supabaseUrl.length > 0)
+export const SUPABASE_KEY_PRESENT: boolean = Boolean(
+  supabasePublishableKey &&
+  supabasePublishableKey.length > 0 &&
+  supabasePublishableKey !== 'sb_publishable_your_key_here' &&
+  supabasePublishableKey !== 'placeholder-anon-key'
+)
+
 export const isSupabaseConfigured = (): boolean => {
-  return Boolean(
-    supabaseUrl &&
-    supabasePublishableKey &&
-    supabasePublishableKey.length > 0 &&
-    supabasePublishableKey !== 'your-supabase-publishable-key' &&
-    supabasePublishableKey !== 'placeholder-anon-key'
-  )
+  return SUPABASE_URL_PRESENT && SUPABASE_KEY_PRESENT
 }
 
 declare global {
@@ -21,11 +24,11 @@ declare global {
   var __samewave_supabase: SupabaseClient | undefined
 }
 
-// Create Supabase client singleton with persistent session storage
+// Create single canonical Supabase client singleton with persistent session storage
 export const supabase: SupabaseClient =
   globalThis.__samewave_supabase ||
   createClient(
-    supabaseUrl,
+    supabaseUrl || 'https://placeholder.supabase.co',
     supabasePublishableKey || 'placeholder-anon-key',
     {
       auth: {
@@ -43,6 +46,6 @@ if (import.meta.env.DEV) {
 
 if (!isSupabaseConfigured()) {
   console.info(
-    '[SameWave Supabase] Supabase client initialized in fallback mode. To enable live database & auth, add VITE_SUPABASE_PUBLISHABLE_KEY to your .env file.'
+    '[SameWave Supabase] Supabase client initialized in fallback mode. To enable live auth & realtime, add VITE_SW_SUPABASE_KEY to your .env file.'
   )
 }

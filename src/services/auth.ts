@@ -86,7 +86,7 @@ export async function upsertProfile(user: User): Promise<void> {
 export async function signInWithGoogle(): Promise<{ error: Error | null }> {
   if (!isSupabaseConfigured()) {
     return {
-      error: new Error('Supabase is not yet configured with VITE_SUPABASE_PUBLISHABLE_KEY in .env.'),
+      error: new Error('Supabase is not yet configured with VITE_SW_SUPABASE_KEY in .env.'),
     }
   }
 
